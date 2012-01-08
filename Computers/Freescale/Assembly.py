@@ -9,19 +9,16 @@
 
 """
 
-#debug
-import pprint
-
 
 import inspect, string
 import Instructions
 
-from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, dblQuotedString, delimitedList, ParseException
+from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, dblQuotedString, ZeroOrMore, ParseException, opAssoc, operatorPrecedence
 
 class InvalidMnemonicException(Exception): #FIXME: should extend UserCodeException
     pass
 
-def get_all_mnemonics(predicate = lambda : True):
+def get_all_mnemonics(predicate = lambda x : True):
     """
         Returns all valid assembly mnemonics, as defined in the instruciton set.
     """
@@ -32,7 +29,7 @@ def get_all_mnemonics(predicate = lambda : True):
     #for each class in the Instructions module
     for _, instruction in inspect.getmembers(Instructions, lambda x : inspect.isclass(x)):
 
-        if issubclass(instruction, Instructions.HCS08_Operation) and predicate:
+        if issubclass(instruction, Instructions.HCS08_Operation) and predicate(instruction):
 
             #add each valid mnemonic to the list
             for mnemonic in instruction.mnemonics:
@@ -51,15 +48,10 @@ class Tokens:
     #
 
     #true instruction mnemonics
-    true_mnemonic = oneOf(get_all_mnemonics(), caseless=True)
+    mnemonic = oneOf(get_all_mnemonics(lambda cls : not issubclass(cls, Instructions.DC)), caseless=True)
 
-    #define the core assembler psueod-ops
-    dc_pseudo_op = oneOf('dc dc.b dc.w', caseless=True)
-    ds_pseudo_op = oneOf('ds ds.b ds.w', caseless=True)
-    pseudo_op = CaselessLiteral('equ') | CaselessLiteral('org') | dc_pseudo_op | ds_pseudo_op
-
-    #generic mnemonic
-    mnemonic = true_mnemonic | pseudo_op
+    #dc psueod-op mnemonics
+    dc_pseudo_op = CaselessLiteral('dc.w') | CaselessLiteral('dc.b') | CaselessLiteral('dc')
 
     #
     # Basic assembler token definitions
@@ -74,7 +66,7 @@ class Tokens:
     bitNumber = oneOf('0 1 2 3 4 5 6 7')
 
     #assembler labels
-    label = ~(mnemonic) +  Word(alphas, alphanums + '_') + Optional(Literal(':')).suppress()
+    label = ~(mnemonic) + ~(dc_pseudo_op) +  Word(alphas, alphanums + '_') + Optional(Literal(':')).suppress()
 
     #reference to a previously defined label
     reference = Word(alphas, alphanums + '_')
@@ -82,38 +74,56 @@ class Tokens:
     #todo: allow processing of numeric literals
     operand = number ^ reference
 
+    #
+    # Basic expressions, which can be used to evaluate things like ~RAMSTART or RAMSTART+1
+    #
+
+    #the operations allowed in an ASM expression
+    allowed_opers = \
+        [
+            (Literal('-'), 1, opAssoc.RIGHT), #sign
+            (Literal('^'), 2, opAssoc.RIGHT), #exponentiation
+            (Literal('~'), 1, opAssoc.RIGHT), #bitwise inversion
+            (oneOf('<<  >>'), 2, opAssoc.LEFT), #bit shift operators
+            (oneOf('* / &'), 2, opAssoc.LEFT), #multiplication, division, and bitwise AND
+            (oneOf('+ - |'), 2, opAssoc.LEFT) #addition, subtraction, and bitwise OR
+        ]
+
+    #a recursive grammar which allows operations to be performed on numbers
+    operand_expression = operatorPrecedence(operand, allowed_opers)
+
 
     #
     # Instruction Suffixes, which specify the acceptable arguments to the various instruction classes
     #
 
     #immediate addressing
-    immediate_suffix = Literal('#').suppress() + operand.setResultsName('immediate')
+    immediate_suffix = Literal('#').suppress() + operand_expression.setResultsName('immediate')
 
     #immediate and extended addressing
-    direct_suffix = operand.setResultsName('direct')
+    direct_suffix = operand_expression.setResultsName('direct')
 
     #indexed (and indexed offset) addressing
-    indexed_suffix = Optional(operand).setResultsName('index_offset') + Literal(',').suppress() + (CaselessLiteral('X+').setResultsName('index') | CaselessLiteral('X').setResultsName('index'))
+    indexed_suffix = Optional(operand_expression).setResultsName('index_offset') + Literal(',').suppress() + (CaselessLiteral('X+').setResultsName('index') | CaselessLiteral('X').setResultsName('index'))
 
     #stack offset addressing
-    stack_suffix = operand.setResultsName('stack_offset') + Literal(',').suppress() + CaselessLiteral('SP').suppress();
+    stack_suffix = operand_expression.setResultsName('stack_offset') + Literal(',').suppress() + CaselessLiteral('SP').suppress();
 
     #numbered bit suffix
-    bit_suffix = bitNumber.setResultsName('bit') + Literal(',').suppress() + operand.setResultsName('direct')
+    bit_suffix = bitNumber.setResultsName('bit') + Literal(',').suppress() + operand_expression.setResultsName('direct')
 
     #loop primitive / move suffixes
-    branch_suffix = (indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix) + Literal(',').suppress() + operand.setResultsName('target')
+    branch_suffix = (indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix) + Literal(',').suppress() + operand_expression.setResultsName('target')
 
     #
     # Pseudo-Op Suffix
     #
 
     #constants, as allowed by the assembler: numbers, double-quoted strings, and single-quoted characters
-    constant = number | Group(dblQuotedString) | Group(Literal("'") + Word(string.printable, max=1) + Literal("'").suppress())
+    constant = operand_expression | Group(Literal('"') + Word(string.printable.replace('"', '')) + Literal('"').suppress()) | Group(Literal("'") + Word(string.printable.replace("'", ''), max=1) + Literal("'").suppress())
 
     #suffix for define constant- a comma-delimited list of constants
-    dc_suffix = delimitedList(constant).setResultsName('defined')
+    dc_suffix = Group(constant + ZeroOrMore(Literal(',').suppress() + constant)).setResultsName('defined')
 
     #
     # Core parsing definitions
@@ -126,8 +136,9 @@ class Tokens:
     non_dc_instruction = mnemonic.setResultsName('mnemonic') + Optional(branch_suffix | indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix)
 
     #define constant definition
-    dc_instruction = oneOf('dc dc.b dc.w').setResultsName('mnemonic') + dc_suffix
+    dc_instruction = dc_pseudo_op.setResultsName('mnemonic') + dc_suffix
 
+    #allow a line to contain either a normal instruction _or_ a define constant instruction
     instruction = dc_instruction | non_dc_instruction
 
     #a normal line of ASM, which may include labels or comments

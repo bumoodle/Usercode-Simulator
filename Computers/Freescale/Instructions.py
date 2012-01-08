@@ -8,7 +8,7 @@
 
 
 
-from utils import parse_number, parse_operand, split_word, is_numeric
+from utils import parse_number, parse_operand, split_word, is_numeric, fit_to_size
 
 
 def _machine_codes_standard(suffix, include_imm=True):
@@ -448,6 +448,84 @@ class DS_W(DS):
         return 2
 
 
+class DC(HCS08_PseudoOp):
+    """
+        Defines one or more constant terms, which are placed directly in flash.
+        Assumes byte
+    """
+
+    mnemonics = ['dc', 'dc.b']
+
+    @classmethod
+    def assemble(cls, tokens, symbol_list, assembler):
+
+        try:
+            #attempt to get a set of integers which represent the constant defined
+            definitions = cls.parse_defines(tokens['defined'], symbol_list)
+
+        except KeyError:
+            raise InvalidAddressingException('You cannot use the DC psuedo-op without an argument; it must be followed by a constant to define. See the course text for more information.')
+
+        return definitions
+
+    @staticmethod
+    def unit_size():
+        """
+            Returns the unit size of the Define Constant operation; this is equal to the amount of bytes generated per single non-string constant.
+        """
+        return 1
+
+    @classmethod
+    def parse_defines(cls, defines, symbol_list):
+
+        raw_defines = []
+
+        item = None
+
+        try:
+
+            for item in defines.asList():
+
+                #if the item is an ASCII string
+                if len(item) == 2 and item[0] == '"':
+
+                    #add its raw bytes to our result
+                    raw_defines.extend([ord(c) for c in item[1]])
+
+                #if the item is a raw ASCII character
+                elif len(item) == 2 and item[0] == "'":
+
+                    #fit the character to match the unit size of the DC operation
+                    raw = fit_to_size(ord(item[1]), cls.unit_size())
+
+                    #add the raw byte contained to our result
+                    raw_defines.extend(raw)
+
+                #otherwise, parse it as an operand
+                else:
+
+                    #break the operand down into bytes, and then
+                    raw = parse_operand(item, symbol_list, cls.unit_size())
+                    raw_defines.extend(raw)
+
+        except TypeError as e:
+            raise InvalidAddressingException('One or more of your ' + cls.shorthand() + ' statements is malformed, near ' + repr(item) + ' [Debug information:' + repr(e) + ']' )
+
+
+        #return the raw definitions
+        return raw_defines
+
+class DCW(DC):
+    """
+        Define word-size constant
+    """
+
+    mnemonics = ['dc.w']
+
+    @staticmethod
+    def unit_size():
+        return 2
+
 
 class EQU(HCS08_PseudoOp):
     """
@@ -463,7 +541,7 @@ class EQU(HCS08_PseudoOp):
         #if 'direct' no in tokens: #TODO: raise UserException
 
         #override the symbol table entry with the current
-        assembler.symbols[tokens['label'][0]] = parse_number(tokens['direct'])
+        assembler.symbols[tokens['label'][0]] = parse_operand(tokens['direct'], assembler.symbols)
 
 
 class ADC(HCS08_Instruction):

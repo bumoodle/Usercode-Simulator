@@ -78,8 +78,7 @@ class HCS08(Computer):
 
         #if code was provided, use it to fill the flash
         if code is not None:
-            asm = Assembler(self.flash)
-            asm.process_code(code)
+            self.load_program(code)
 
     def initialize_ram(self):
         """
@@ -113,11 +112,17 @@ class HCS08(Computer):
                 #simulate a random byte value
                 self.flash[i] = 0
 
-    def load_program(code):
+    def load_program(self, code):
         """
             Convenince method, which calls the assemler on the given block of flash.
         """
-        pass
+
+        #create a new assembler targeting this device's flash
+        asm = Assembler(self.flash)
+
+        #and use it to assemble the given code
+        asm.process_code(code)
+
 
 
 
