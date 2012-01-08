@@ -102,7 +102,7 @@ class Tokens:
     #numbered bit suffix
     bit_suffix = bitNumber.setResultsName('bit') + Literal(',').suppress() + operand.setResultsName('direct')
 
-    #loop primitive
+    #loop primitive / move suffixes
     branch_suffix = (indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix) + Literal(',').suppress() + operand.setResultsName('target')
 
     #
@@ -123,7 +123,12 @@ class Tokens:
     comment = Literal(';') + restOfLine
 
     #core instruction definition
-    instruction = mnemonic.setResultsName('mnemonic') + Optional(branch_suffix | indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix | dc_suffix)
+    non_dc_instruction = mnemonic.setResultsName('mnemonic') + Optional(branch_suffix | indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix)
+
+    #define constant definition
+    dc_instruction = oneOf('dc dc.b dc.w').setResultsName('mnemonic') + dc_suffix
+
+    instruction = dc_instruction | non_dc_instruction
 
     #a normal line of ASM, which may include labels or comments
     asm_line = (Optional(label).setResultsName('label') + Optional(instruction) + Optional(comment).suppress()) | comment.suppress()
@@ -200,7 +205,10 @@ class Assembler(object):
 
         for i in self.flash:
             if self.flash[i] != 0:
-                print hex(i) + '\t\t', hex(self.flash[i])
+                try:
+                    print hex(i) + '\t\t', hex(self.flash[i])
+                except TypeError:
+                    print self.flash[i]
 
 
 

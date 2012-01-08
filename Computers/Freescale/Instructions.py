@@ -11,13 +11,86 @@
 from utils import parse_number, parse_operand, split_word, is_numeric
 
 
+def _machine_codes_standard(suffix, include_imm=True):
+
+    #return the standard set of machine codes for the instruction with the given suffix
+    machine_codes = \
+            {
+                'dir': [0xB0 + suffix],
+                'ext': [0xC0 + suffix],
+                'ix2': [0xD0 + suffix],
+                'ix1': [0xE0 + suffix],
+                'ix' : [0xF0 + suffix],
+                'sp2': [0x9E, 0xD0 + suffix],
+                'sp1': [0x9E, 0xE0 + suffix],
+            }
+
+    #if we've been instructed to include the immediate addresing mode, include it
+    if include_imm:
+        machine_codes['imm'] = [0xA0 + suffix]
+
+    #return the newly created machinec odes
+    return machine_codes
+
+
+def _machine_codes_axh_inherent(suffix, include_h = False):
+    """
+        Helper method which generates a normal set of machine codes for AXH inherent values.
+    """
+
+    #create the default array of machine codes
+    machine_codes = \
+            {
+                'dir':  [0x30 + suffix],
+                'inha': [0x40 + suffix],
+                'inhx': [0x50 + suffix],
+                'ix1':  [0x60 + suffix],
+                'ix' :  [0x70 + suffix],
+                'sp1':  [0x9E, 0x60 + suffix]
+            }
+
+    #if include_h is true, then add the machine code for H
+    if include_h:
+        machine_codes['inhh'] = [0x80 + suffix]
+
+    #return the newly generated machine codes
+    return machine_codes
+
+def _machine_codes_bit_operation(prefix, is_clear):
+
+    #clear expressions start with a suffix of 1, set of 0
+    suffix = 1 if is_clear else 0
+
+    #and return the set of machine codes for a bit operation
+    return \
+            {
+                'dirb0': [(0x1 * prefix) + suffix],
+                'dirb1': [(0x1 * prefix) + suffix + 2],
+                'dirb2': [(0x1 * prefix) + suffix + 4],
+                'dirb3': [(0x1 * prefix) + suffix + 6],
+                'dirb4': [(0x1 * prefix) + suffix + 8],
+                'dirb5': [(0x1 * prefix) + suffix + 10],
+                'dirb6': [(0x1 * prefix) + suffix + 12],
+                'dirb7': [(0x1 * prefix) + suffix + 14]
+            }
+
+def _machine_codes_jump_operation(suffix):
+
+    return \
+            {
+                'dir': [0xB0 + suffix],
+                'ext': [0xC0 + suffix],
+                'ix2': [0xD0 + suffix],
+                'ix1': [0xE0 + suffix],
+                'ix' : [0xF0 + suffix],
+            }
+
+
 class InvalidAddressingException(Exception):
     """
         Specified when a given instruction is supplied with an invalid addressing mode.
     """
     pass
-
-
 
 
 class HCS08_Operation(object):
@@ -111,7 +184,7 @@ class HCS08_Instruction(HCS08_Operation):
             Gets the machine code the given instruction under direct/extended addressing modes.
         """
         #get the operand
-        operand = parse_number(tokens['direct'])
+        operand = parse_operand(tokens['direct'], symbol_list)
 
         #and add it to the code, given the appropriate mode
         return cls.add_operand_to_code('ext', 'dir', operand)
@@ -191,7 +264,7 @@ class HCS08_Instruction(HCS08_Operation):
             print tokens
             raise InvalidAddressingException('Invalid addressing mode ' + repr(e.args[0]).upper() + ' for instruction ' + cls.shorthand() + '.')
 
-class HCS08_Instruction_with_AXInherent(HCS08_Instruction):
+class HCS08_Instruction_with_AXH_Inherent(HCS08_Instruction):
     """
         Extension to the normal instruction which better supports inherent addressing of A/X.
     """
@@ -217,12 +290,41 @@ class HCS08_Instruction_with_AXInherent(HCS08_Instruction):
                 elif mnemonic[-1] == 'x':
                     return cls.machine_codes['inhx']
 
+                #target is H
+                elif mnemonic[-1] == 'h':
+                    return cls.machine_codes['inhh']
+
         #if those modes weren't provided, throw an error
         except KeyError:
             raise InvalidAddressingException('Could not address the ' + mnemonic[:-1] + ' instruction as ' + mnemonic + '. Check the CPU quick reference for more information.')
 
         #deletgate to the parent class
-        return super(HCS08_Instruction_with_AXInherent, cls).assemble(tokens, symbol_list, assembler)
+        return super(HCS08_Instruction_with_AXH_Inherent, cls).assemble(tokens, symbol_list, assembler)
+
+class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
+
+    @classmethod
+    def assemble(cls, tokens, symbol_list, assembler):
+        """
+            Assemble a constructed branch, which is essentially the same as a HCS08_Instruction_with_AHX_Inherent instruction, except with a relative address appended.
+        """
+
+        #get the machine code for the simple
+        base = super(CBEQ, cls).assemble(tokens, symbol_list, assembler)
+
+        #and append the branch offset
+        target = parse_operand(tokens['target'], symbol_list)
+
+        #if we were provided a label, rather than an offset, calculate an offset
+        if not is_numeric(tokens['target']):
+            offset = (target - (assembler.location + len(base) + 1)) % 255 #location = base location + the length of the instruction without the rel, + 1(the length of the rel)
+
+        #append the new offset to the existing instruction
+        base.append(offset)
+
+        #and return it
+        return base
+
 
 
 class HCS08_Simple_Branch(HCS08_Instruction):
@@ -337,6 +439,8 @@ class DS_W(DS):
         Reserves a set of words (typicaly in RAM) by incrementing the location counter.
     """
 
+    mnemonics = ['ds.w']
+
     @staticmethod
     def size_to_reserve():
 
@@ -368,17 +472,7 @@ class ADC(HCS08_Instruction):
     """
     mnemonics = ['adc']
 
-    machine_codes = \
-            {
-                'imm': [0xA9],
-                'dir': [0xB9],
-                'ext': [0xC9],
-                'ix2': [0xD9],
-                'ix1': [0xE9],
-                'ix' : [0xF9],
-                'sp2': [0x9E, 0xD9],
-                'sp1': [0x9E, 0xE9],
-            }
+    machine_codes = _machine_codes_standard(0x9)
 
     @classmethod
     def execute(cls, machine, operand):
@@ -411,18 +505,7 @@ class ADD(HCS08_Instruction):
         ADD (Add without carry) instruction.
     """
     mnemonics = ['add']
-
-    machine_codes = \
-            {
-                'imm': [0xAB],
-                'dir': [0xBB],
-                'ext': [0xCB],
-                'ix2': [0xDB],
-                'ix1': [0xEB],
-                'ix' : [0xFB],
-                'sp2': [0x9E, 0xDB],
-                'sp1': [0x9E, 0xEB],
-            }
+    machine_codes = _machine_codes_standard(0xB)
 
 
 class AIS(HCS08_Instruction):
@@ -430,11 +513,7 @@ class AIS(HCS08_Instruction):
         AIS (Add Immediate to the Stack Pointer) instruction.
     """
     mnemonics = ['ais']
-
-    machine_codes = \
-            {
-                'imm': [0xA7],
-            }
+    machine_codes = { 'imm': [0xA7] }
 
 
 class AIS(HCS08_Instruction):
@@ -442,11 +521,7 @@ class AIS(HCS08_Instruction):
         AIS (Add Immediate to the Stack Pointer) instruction.
     """
     mnemonics = ['ais']
-
-    machine_codes = \
-            {
-                'imm': [0xAF],
-            }
+    machine_codes =  { 'imm': [0xAF] }
 
 
 class AND(HCS08_Instruction):
@@ -454,50 +529,25 @@ class AND(HCS08_Instruction):
         AND (Logical AND) instruction.
     """
     mnemonics = ['and']
+    machine_codes = _machine_codes_standard(0x4)
 
-    machine_codes = \
-            {
-                'imm': [0xA4],
-                'dir': [0xB4],
-                'ext': [0xC4],
-                'ix2': [0xD4],
-                'ix1': [0xE4],
-                'ix' : [0xF4],
-                'sp2': [0x9E, 0xD4],
-                'sp1': [0x9E, 0xE4],
-            }
 
-class ASL(HCS08_Instruction_with_AXInherent):
+
+class ASL(HCS08_Instruction_with_AXH_Inherent):
     """
         ASL (Arithmetic Shift Left) instruction.
     """
     mnemonics = ['asl', 'asla', 'aslx']
+    machine_codes = _machine_codes_axh_inherent(0x8)
 
-    machine_codes = \
-            {
-                'dir': [0x38],
-                'inha' : [0x48],
-                'inhx' : [0x58],
-                'ix1': [0x68],
-                'ix' : [0x78],
-                'sp1': [0x9E, 0x68]
-            }
 
-class ASR(HCS08_Instruction_with_AXInherent):
+class ASR(HCS08_Instruction_with_AXH_Inherent):
     """
         ASR (Arithmetic Shift Right) instruction.
     """
     mnemonics = ['asr', 'asra', 'asrx']
+    machine_codes = _machine_codes_axh_inherent(0x7)
 
-    machine_codes = \
-            {
-                'dir': [0x37],
-                'inha' : [0x47],
-                'inhx' : [0x57],
-                'ix1': [0x67],
-                'ix' : [0x77],
-                'sp1': [0x9E, 0x67]
-            }
 
 class BCC(HCS08_Simple_Branch):
     """
@@ -505,11 +555,7 @@ class BCC(HCS08_Simple_Branch):
         Branches if the carry bit is clear.
     """
     mnemonics = ['bcc']
-
-    machine_codes = \
-            {
-                'rel': [0x24],
-            }
+    machine_codes = { 'rel': [0x24] }
 
 
 class BCLR(HCS08_Bit_Operation):
@@ -518,19 +564,7 @@ class BCLR(HCS08_Bit_Operation):
         Branches if the carry bit is clear.
     """
     mnemonics = ['bclr']
-
-    machine_codes = \
-            {
-                'dirb0': [0x11],
-                'dirb1': [0x13],
-                'dirb2': [0x15],
-                'dirb3': [0x17],
-                'dirb4': [0x19],
-                'dirb5': [0x1B],
-                'dirb6': [0x1D],
-                'dirb7': [0x1F],
-            }
-
+    machine_codes = _machine_codes_bit_operation(prefix=1, is_clear=True)
 
 class BCS(HCS08_Simple_Branch):
     """
@@ -538,86 +572,57 @@ class BCS(HCS08_Simple_Branch):
         Branches if the carry bit is set (1).
     """
     mnemonics = ['bcs']
+    machine_codes = { 'rel': [0x25] }
 
-    machine_codes = \
-            {
-                'rel': [0x25],
-            }
 
 class BEQ(HCS08_Simple_Branch):
     """
         BEQ (Branch if Equal)
     """
     mnemonics = ['bcs']
-
-    machine_codes = \
-            {
-                'rel': [0x25],
-            }
+    machine_codes = { 'rel': [0x25] }
 
 class BGE(HCS08_Simple_Branch):
     """
         BGE (Branch if Greater than or Equal To)
     """
     mnemonics = ['bge']
-
-    machine_codes = \
-            {
-                'rel': [0x90],
-            }
+    machine_codes = { 'rel': [0x90] }
 
 class BGND(HCS08_Not_Implemented):
     """
         BGND: Enter background debug mode.
     """
-
     mnemonics = ['bgnd']
 
-    pass
 
 class BGT(HCS08_Simple_Branch):
     """
         BGT (Branch if Greater Than)
     """
     mnemonics = ['bgt']
-
-    machine_codes = \
-            {
-                'rel': [0x92],
-            }
+    machine_codes =  { 'rel': [0x92] }
 
 class BHCC(HCS08_Simple_Branch):
     """
         BHCC (Branch if Half Carry Clear)
     """
     mnemonics = ['bhcc']
-
-    machine_codes = \
-            {
-                'rel': [0x28],
-            }
+    machine_codes = { 'rel': [0x28] }
 
 class BHCS(HCS08_Simple_Branch):
     """
         BHCS (Branch if Half Carry Set)
     """
     mnemonics = ['bhcs']
-
-    machine_codes = \
-            {
-                'rel': [0x29],
-            }
+    machine_codes = { 'rel': [0x29] }
 
 class BHI(HCS08_Simple_Branch):
     """
         BHI (Branch if Higher)
     """
     mnemonics = ['bhi']
-
-    machine_codes = \
-            {
-                'rel': [0x22],
-            }
+    machine_codes = { 'rel': [0x22] }
 
 
 class BHS(HCS08_Simple_Branch):
@@ -625,33 +630,21 @@ class BHS(HCS08_Simple_Branch):
         BHS (Branch if Higher or Same)
     """
     mnemonics = ['bhs']
-
-    machine_codes = \
-            {
-                'rel': [0x24],
-            }
+    machine_codes = { 'rel': [0x24] }
 
 class BIH(HCS08_Simple_Branch):
     """
         BIH (Branch if IRQ Pin High)
     """
     mnemonics = ['bih']
-
-    machine_codes = \
-            {
-                'rel': [0x2F],
-            }
+    machine_codes = { 'rel': [0x2F] }
 
 class BIL(HCS08_Simple_Branch):
     """
         BIL (Branch of IRQ Pin Low)
     """
     mnemonics = ['bil']
-
-    machine_codes = \
-            {
-                'rel': [0x2E],
-            }
+    machine_codes = { 'rel': [0x2E] }
 
 class BIT(HCS08_Instruction):
     """
@@ -659,18 +652,7 @@ class BIT(HCS08_Instruction):
         Calculates what the flags would be if the accumulator was AND'd with the operand.
     """
     mnemonics = ['bit']
-
-    machine_codes = \
-            {
-                'imm': [0xA5],
-                'dir': [0xB5],
-                'ext': [0xC5],
-                'ix2': [0xD5],
-                'ix1': [0xE5],
-                'ix' : [0xF5],
-                'sp2': [0x9E, 0xD5],
-                'sp1': [0x9E, 0xE5],
-            }
+    machine_codes = _machine_codes_standard(0x5)
 
 
 class BLE(HCS08_Simple_Branch):
@@ -678,110 +660,70 @@ class BLE(HCS08_Simple_Branch):
         BLE (Branch if Less than or Equal)
     """
     mnemonics = ['ble']
-
-    machine_codes = \
-            {
-                'rel': [0x93],
-            }
+    machine_codes = { 'rel': [0x93] }
 
 class BLO(HCS08_Simple_Branch):
     """
         BLO (Branc if Lower)
     """
     mnemonics = ['blo']
-
-    machine_codes = \
-            {
-                'rel': [0x25],
-            }
+    machine_codes = { 'rel': [0x25] }
 
 class BLS(HCS08_Simple_Branch):
     """
         BLS (Branch if Lower or Same)
     """
     mnemonics = ['bls']
-
-    machine_codes = \
-            {
-                'rel': [0x23],
-            }
+    machine_codes = { 'rel': [0x23] }
 
 class BLT(HCS08_Simple_Branch):
     """
         BLT (Branch if Less Than)
     """
     mnemonics = ['blt']
-
-    machine_codes = \
-            {
-                'rel': [0x91],
-            }
+    machine_codes = { 'rel': [0x91] }
 
 class BMC(HCS08_Simple_Branch):
     """
         BMC (Branch if Interrupt Mask is Clear)
     """
     mnemonics = ['bmc']
-
-    machine_codes = \
-            {
-                'rel': [0x2C],
-            }
+    machine_codes = { 'rel': [0x2C] }
 
 class BMI(HCS08_Simple_Branch):
     """
         BMI (Branch if Minus)
     """
     mnemonics = ['bmi']
-
-    machine_codes = \
-            {
-                'rel': [0x2B],
-            }
+    machine_codes = { 'rel': [0x2B] }
 
 class BMS(HCS08_Simple_Branch):
     """
         BMS (Branch if Interrupt Mask is Set)
     """
     mnemonics = ['bms']
-
-    machine_codes = \
-            {
-                'rel': [0x2D],
-            }
+    machine_codes = { 'rel': [0x2D] }
 
 class BNE(HCS08_Simple_Branch):
     """
         BNE (Branch if Not Equal)
     """
     mnemonics = ['bne']
-
-    machine_codes = \
-            {
-                'rel': [0x26],
-            }
+    machine_codes = { 'rel': [0x26] }
 
 class BPL(HCS08_Simple_Branch):
     """
         BPL (Branch of IRQ Pin Low)
     """
     mnemonics = ['bpl']
-
-    machine_codes = \
-            {
-                'rel': [0x2A],
-            }
+    machine_codes = { 'rel': [0x2A] }
 
 class BRA(HCS08_Simple_Branch):
     """
         BRA (Branch Always)
     """
     mnemonics = ['bra']
-
-    machine_codes = \
-            {
-                'rel': [0x20],
-            }
+    machine_codes = { 'rel': [0x20] }
 
 class BRCLR(HCS08_Bit_Branch):
     """
@@ -789,18 +731,7 @@ class BRCLR(HCS08_Bit_Branch):
         Branches if the given bit is clear.
     """
     mnemonics = ['brclr']
-
-    machine_codes = \
-            {
-                'dirb0': [0x01],
-                'dirb1': [0x03],
-                'dirb2': [0x05],
-                'dirb3': [0x07],
-                'dirb4': [0x09],
-                'dirb5': [0x0B],
-                'dirb6': [0x0D],
-                'dirb7': [0x0F],
-            }
+    machine_codes = _machine_codes_bit_operation(prefix=0, is_clear=True)
 
 class BRN(HCS08_Simple_Branch):
     """
@@ -808,11 +739,7 @@ class BRN(HCS08_Simple_Branch):
         Branches if I=0.
     """
     mnemonics = ['brn']
-
-    machine_codes = \
-            {
-                'rel': [0x21],
-            }
+    machine_codes = { 'rel': [0x21] }
 
 
 class BRSET(HCS08_Bit_Branch):
@@ -821,37 +748,14 @@ class BRSET(HCS08_Bit_Branch):
         Branches if the given bit is set.
     """
     mnemonics = ['brset']
-
-    machine_codes = \
-            {
-                'dirb0': [0x00],
-                'dirb1': [0x02],
-                'dirb2': [0x04],
-                'dirb3': [0x06],
-                'dirb4': [0x08],
-                'dirb5': [0x0A],
-                'dirb6': [0x0C],
-                'dirb7': [0x0E],
-            }
-
+    machine_codes = _machine_codes_bit_operation(prefix=0, is_clear=False)
 
 class BSET(HCS08_Bit_Operation):
     """
         BSET (Set Bit)
     """
     mnemonics = ['bset']
-
-    machine_codes = \
-            {
-                'dirb0': [0x10],
-                'dirb1': [0x12],
-                'dirb2': [0x14],
-                'dirb3': [0x16],
-                'dirb4': [0x18],
-                'dirb5': [0x1A],
-                'dirb6': [0x1C],
-                'dirb7': [0x1E],
-            }
+    machine_codes = _machine_codes_bit_operation(prefix=1, is_clear=False)
 
 
 class BSR(HCS08_Simple_Branch):
@@ -860,46 +764,456 @@ class BSR(HCS08_Simple_Branch):
         Branches if I=0.
     """
     mnemonics = ['brn']
-
-    machine_codes = \
-            {
-                'rel': [0x21],
-            }
+    machine_codes = { 'rel': [0x21] }
 
     #TODO: override execute
 
 
-class CBEQ(HCS08_Instruction_with_AXInherent):
+class CBEQ(HCS08_Constructed_Branch):
     """
         Compare and Branch if Equal
     """
     mnemonics = ['cbeq', 'cbeqa', 'cbeqx']
+    machine_codes = _machine_codes_axh_inherent(0x01)
+
+class CLC(HCS08_Instruction):
+    """
+        Clear Carry Bit
+    """
+    mnemonics = ['clc']
+    machine_codes = { 'inh': [0x98] }
+
+
+class CLI(HCS08_Instruction):
+    """
+        Clear Interrupt Mask
+    """
+    mnemonics = ['cli']
+    machine_codes = { 'inh': [0x9A] }
+
+
+class CLR(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Clears a given register or memory address.
+    """
+    mnemonics = ['clr', 'clra', 'clrx', 'clrh']
+    machine_codes = _machine_codes_axh_inherent(0xF, include_h=True)
+
+class CMP(HCS08_Instruction):
+    """
+        Compare accumulator with memory
+    """
+    mnemonics = ['cmp']
+    machine_codes = _machine_codes_standard(0x1)
+
+class COM(HCS08_Instruction_with_AXH_Inherent):
+    """
+        One's compliment a given register or memory address.
+    """
+    mnemonics = ['com', 'coma', 'comx']
+    machine_codes = _machine_codes_axh_inherent(0x03)
+
+class CPHX(HCS08_Instruction):
+    """
+        Compare word with HX.
+    """
+    mnemonics = ['cphx']
 
     machine_codes = \
             {
-                'dir':  [0x31],
-                'inha': [0x41],
-                'inhx': [0x51],
-                'ix1': [0x61], #technically is also post-increment
-                'ix' : [0x71], #technically is also post-increment
-                'sp1':  [0x9E, 0x61],
+                'imm2': [0x65],
+                'dir':  [0x75],
+                'ext':  [0x65],
+                'sp1':  [0x9E, 0x63]
+            }
+
+
+class CPX(HCS08_Instruction):
+    """
+        Compare X with Memory
+    """
+    mnemonics = ['cpx']
+    machine_codes = _machine_codes_standard(0x3)
+
+
+class DAA(HCS08_Instruction):
+    """
+        Decimal Adjust Accumulator
+    """
+    mnemonics = ['daa']
+    machine_codes = { 'inh': [0x72] }
+
+
+class DBNZ(HCS08_Constructed_Branch):
+    """
+        Decrement, then Branch if target is Zero
+    """
+    mnemonics = ['dbnz', 'dbnza', 'dbnzx']
+    machine_codes = _machine_codes_axh_inherent(0xB)
+
+class DEC(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Decrement Target
+    """
+    mnemonics = ['dec', 'deca', 'decx']
+    machine_codes = _machine_codes_axh_inherent(0xA)
+
+class DIV(HCS08_Instruction):
+    """
+        Divide
+    """
+    mnemonics = ['div']
+    machine_codes = { 'inh': [0x52] }
+
+class EOR(HCS08_Instruction):
+    """
+        Exclusive OR Memory with Accumulator
+    """
+    mnemonics = ['eor']
+    machine_codes = _machine_codes_axh_inherent(0x8)
+
+class INC(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Increment Target
+    """
+    mnemonics = ['inc', 'inca', 'incx']
+    machine_codes = _machine_codes_axh_inherent(0xC)
+
+class JMP(HCS08_Instruction):
+    """
+        Jump
+    """
+    mnemonics = ['jmp']
+    machine_codes = _machine_codes_jump_operation(0xC)
+
+class JSR(HCS08_Instruction):
+    """
+        Jump to Subroutine
+    """
+    mnemonics = ['jsr']
+    machine_codes = _machine_codes_jump_operation(0xD)
+
+
+class LDA(HCS08_Instruction):
+    """
+        Load value into accumulator
+    """
+    mnemonics = ['lda']
+    machine_codes = _machine_codes_standard(0x06)
+
+class LDHX(HCS08_Instruction):
+    """
+        Load word into HX.
+    """
+    mnemonics = ['ldhx']
+
+    machine_codes = \
+            {
+                'imm2': [0x45],
+                'dir':  [0x55],
+                'ext':  [0x32],
+                'ix2':  [0x9E, 0xBE],
+                'ix1':  [0x9E, 0xAE],
+                'ix' :  [0x9E, 0xCE],
+                'sp1':  [0x9E, 0xFE],
+            }
+
+class LDX(HCS08_Instruction):
+    """
+        Load X from Memory
+    """
+    mnemonics = ['ldx']
+    machine_codes = _machine_codes_standard(0xE)
+
+class LSL(ASL):
+    """
+        Logical Shift Left- Identical to ASL
+    """
+    mnemonics = ['lsl', 'lsla', 'lslx']
+
+    #Note:  Do not impelement further; identical to ASL.
+    #       Any changes should be made there.
+
+
+class LSR(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Logical Shift Right
+    """
+    mnemonics = ['lsr', 'lsra', 'lsrx']
+    machine_codes = _machine_codes_axh_inherent(0x4)
+
+class MOV(HCS08_Instruction):
+    """
+        Move (copy from RAM to RAM)
+    """
+    mnemonics = ['mov']
+
+    machine_codes = \
+            {
+                'dir': [0x4E],
+                'ix1': [0x5E], #technically post increment
+                'imm': [0x6E],
+                'ix':  [0x7E] #technically post increment
             }
 
     @classmethod
     def assemble(cls, tokens, symbol_list, assembler):
 
-        #get the machine code for the simple
-        base = super(CBEQ, cls).assemble(tokens, symbol_list, assembler)
+        #perform the normal, core processing to handle the first argument
+        code = super(MOV, cls).assemble(tokens, symbol_list, assembler)
 
-        #and append the branch offset
-        target = parse_operand(tokens['target'], symbol_list)
+        #and append the move target
+        if 'target' in tokens:
+            code.append(parse_operand(tokens['target'], symbol_list))
 
-        #if we were provided a label, rather than an offset, calculate an offset
-        if not is_numeric(tokens['target']):
-            offset = (target - (assembler.location + len(base) + 1)) % 255 #location = base location + the length of the instruction without the rel, + 1(the length of the rel)
+        #in the event that we have the format MOV dd,X+, the parser will interpret that as an index offset, which will automatically produce the correct output
+        #if that did not occur, it's likely the MOV instruction is malformed
+        elif 'index_offset' not in tokens:
+            raise InvalidAddressingException('The MOV instruction cannot be used this way. Are you using a supported addressing mode? Check the CPU quick reference, and try again.')
 
-        #append the new offset to the existing instruction
-        base.append(offset)
+        #and return the new machine code
+        return code
 
-        #and return it
-        return base
+
+
+class MUL(HCS08_Instruction):
+    """
+        Multiply
+    """
+    mnemonics = ['mul']
+    machine_codes = { 'inh': [0x42] }
+
+
+class NEG(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Negate via Two's Compliment
+    """
+
+    mnemonics = ['neg', 'nega', 'negh']
+    machine_codes = _machine_codes_axh_inherent(0x0)
+
+
+class NOP(HCS08_Instruction):
+    """
+        No Operation- do nothing for one machine cycle
+    """
+    mnemonics = ['nop']
+    machine_codes = { 'inh': [0x9D] }
+
+
+class NSA(HCS08_Instruction):
+    """
+        Nibble Swap Accumulator
+    """
+    mnemonics = ['nsa']
+    machine_codes = { 'inh': [0x62] }
+
+
+class ORA(HCS08_Instruction):
+    """
+        Or Accumulator with Memory
+    """
+    mnemonics = ['ora']
+    machine_codes = _machine_codes_standard(0xA)
+
+
+class PSH(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Push family of instructions.
+    """
+    mnemonics = ['psh', 'psha', 'pshx', 'pshh']
+
+    machine_codes = \
+            {
+                'inha': [0x87],
+                'inhx': [0x89],
+                'inhh': [0x8B],
+            }
+
+class PUL(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Pull family of instructions.
+    """
+    mnemonics = ['pul', 'pula', 'pulx', 'pulh']
+
+    machine_codes = \
+            {
+                'inha': [0x86],
+                'inhx': [0x88],
+                'inhh': [0x8A],
+            }
+
+class ROL(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Rotate Left through Carry
+    """
+
+    mnemonics = ['rol', 'rola', 'rolx']
+    machine_codes = _machine_codes_axh_inherent(0x9)
+
+
+class ROR(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Rotate Right through Carry
+    """
+
+    mnemonics = ['ror', 'rora', 'rolx']
+    machine_codes = _machine_codes_axh_inherent(0x6)
+
+
+class RSP(HCS08_Instruction):
+    """
+        Reset Low Byte of Stack Pointer
+    """
+    mnemonics = ['rsp']
+    machine_codes = { 'inh': [0x9C] }
+
+
+class RTI(HCS08_Instruction):
+    """
+        Return from Interrupt
+    """
+    mnemonics = ['rti']
+    machine_codes = { 'inh': [0x80] }
+
+
+class SBC(HCS08_Instruction):
+    """
+        Subtract with Carry
+    """
+    mnemonics = ['sbc']
+    machine_codes = _machine_codes_standard(0x2)
+
+
+class SEC(HCS08_Instruction):
+    """
+        Set Carry Bit
+    """
+    mnemonics = ['sec']
+    machine_codes = { 'inh': [0x99] }
+
+
+class SEI(HCS08_Instruction):
+    """
+        Set Interrupt Mask
+    """
+    mnemonics = ['sei']
+    machine_codes = { 'inh': [0x9B] }
+
+
+class STA(HCS08_Instruction):
+    """
+        Store Accumulator in Memory
+    """
+    mnemonics = ['sta']
+    machine_codes = _machine_codes_standard(0x7, include_imm=False)
+
+class STHX(HCS08_Instruction):
+    """
+        Store H:X in Memory
+    """
+    mnemonics = ['sthx']
+    machine_codes = \
+            {
+                'dir': [0x35],
+                'ext': [0x96],
+                'sp1': [0x9E, 0xFF]
+            }
+
+class STOP(HCS08_Not_Implemented):
+    """
+        Stops processing and enables interrupts.
+        Not implemented due to scope of simulator.
+    """
+
+    mnemonics = ['stop']
+
+
+class STX(HCS08_Instruction):
+    """
+        Store X to Memory
+    """
+    mnemonics = ['stx']
+    machine_codes = _machine_codes_standard(0xF, include_imm=False)
+
+
+class SUB(HCS08_Instruction):
+    """
+        Subtract value from Accumulator
+    """
+    mnemonics = ['sub']
+    machine_codes = _machine_codes_standard(0x0)
+
+
+class SWI(HCS08_Instruction):
+    """
+        Software Interrupt
+    """
+    mnemonics = ['swi']
+    machine_codes = { 'inh': [0x83] }
+
+
+class TAP(HCS08_Instruction):
+    """
+        Transfer Accumulator to CCR
+    """
+    mnemonics = ['tap']
+    machine_codes = { 'inh': [0x84] }
+
+
+class TAX(HCS08_Instruction):
+    """
+        Transfer Accumulator to X
+    """
+    mnemonics = ['tax']
+    machine_codes = { 'inh': [0x97] }
+
+
+class TPA(HCS08_Instruction):
+    """
+        Transfer CCR to Accumulator
+    """
+    mnemonics = ['tca']
+    machine_codes = { 'inh': [0x85] }
+
+
+class TST(HCS08_Instruction_with_AXH_Inherent):
+    """
+        Test for Negative or Zero
+    """
+
+    mnemonics = ['tst', 'tsta', 'tstx']
+    machine_codes = _machine_codes_axh_inherent(0xD)
+
+
+class TSX(HCS08_Instruction):
+    """
+        Transfer SP to HX
+    """
+    mnemonics = ['tsx']
+    machine_codes = { 'inh': [0x95] }
+
+
+class TXA(HCS08_Instruction):
+    """
+        Transfer X to A
+    """
+    mnemonics = ['txa']
+    machine_codes = { 'inh': [0x9F] }
+
+
+class TXS(HCS08_Instruction):
+    """
+        Transfer HX to SP
+    """
+    mnemonics = ['txs']
+    machine_codes = { 'inh': [0x94] }
+
+
+class WAIT(HCS08_Not_Implemented):
+    """
+        Wait for Interrupt
+    """
+    mnemonics = ['wait']
+    machine_codes = {'inh': [0x8F] }
+
