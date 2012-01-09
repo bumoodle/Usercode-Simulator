@@ -114,10 +114,10 @@ class Tokens:
     stack_suffix = operand_expression.setResultsName('stack_offset') + Literal(',').suppress() + CaselessLiteral('SP').suppress();
 
     #numbered bit suffix
-    bit_suffix = bitNumber.setResultsName('bit') + Literal(',').suppress() + operand_expression.setResultsName('direct')
+    bit_suffix = bitNumber.setResultsName('bit') + Literal(',').suppress() + operand_expression.setResultsName('direct') + Literal(',').suppress() + operand_expression.setResultsName('target')
 
     #loop primitive / move suffixes
-    branch_suffix = (indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix) + Literal(',').suppress() + operand_expression.setResultsName('target')
+    branch_suffix = (indexed_suffix | immediate_suffix | direct_suffix | stack_suffix) + Literal(',').suppress() + operand_expression.setResultsName('target')
 
     #
     # Pseudo-Op Suffix
@@ -137,7 +137,7 @@ class Tokens:
     comment = Literal(';') + restOfLine
 
     #core instruction definition
-    non_dc_instruction = mnemonic.setResultsName('mnemonic') + Optional(branch_suffix | indexed_suffix | immediate_suffix | direct_suffix | stack_suffix | bit_suffix)
+    non_dc_instruction = mnemonic.setResultsName('mnemonic') + Optional(bit_suffix | branch_suffix | indexed_suffix | immediate_suffix | direct_suffix | stack_suffix )
 
     #define constant definition
     dc_instruction = dc_pseudo_op.setResultsName('mnemonic') + dc_suffix

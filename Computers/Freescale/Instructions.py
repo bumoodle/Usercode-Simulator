@@ -317,7 +317,7 @@ class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
 
         #if we were provided a label, rather than an offset, calculate an offset
         if not is_numeric(tokens['target']):
-            offset = (target - (assembler.location + len(base) + 1)) % 255 #location = base location + the length of the instruction without the rel, + 1(the length of the rel)
+            target = (target - (assembler.location + len(base) + 1)) % 255 #location = base location + the length of the instruction without the rel, + 1(the length of the rel)
 
         #append the new offset to the existing instruction
         base.append(offset)
@@ -367,13 +367,51 @@ class HCS08_Bit_Operation(HCS08_Instruction):
 
     @classmethod
     def assemble(cls, tokens, symbol_list, assembler):
-        raise NotImplementedError('Bit Operations are not yet implemented.')
+        """
+            Assemble a bit operation, which uses a unique addressing scheme.
+        """
+
+        try:
+
+            #extract the operand for the bit operation
+            operand = parse_operand(tokens['target'], symbol_list)
+
+            #and append it to the correct machine code, which is determined by the bit number
+            return cls.add_operand_to_code(None, 'dirb' + tokens['direct'][0], operand)
+
+        except KeyError:
+            raise InvalidAddressingException('The specified ' + cls.shorthand() + 'operation is addressed incorrectly or malformed. Check the CPU quick reference, and try again.');
+
+
 
 class HCS08_Bit_Branch(HCS08_Instruction):
 
     @classmethod
     def assemble(cls, tokens, symbol_list, assembler):
-        raise NotImplementedError('Bit Branches are not yet implemented.')
+
+        try:
+
+            #extract the operand and branch target
+            operand = parse_operand(tokens['direct'], symbol_list)
+            offset = parse_operand(tokens['target'], symbol_list)
+
+            #if the branch target was non-numeric, convert it to an offset
+            if not is_numeric(tokens['target']):
+                offset = (offset - (assembler.location + 3)) % 256  #here, three bytes is the size of this instruction
+
+            #get the base machine code for this instruction, which includes the bit number
+            code = cls.machine_codes['dirb' + tokens['bit'][0]][:]
+
+            #add the operand and offset
+            code.append(operand)
+            code.append(offset)
+
+            #and return the newly created machine code
+            return code
+
+        except KeyError:
+            raise InvalidAddressingException('The specified ' + cls.shorthand() + 'operation is addressed incorrectly or malformed. Check the CPU quick reference, and try again.');
+
 
 
 class HCS08_Not_Implemented(HCS08_Instruction):
