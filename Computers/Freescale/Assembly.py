@@ -13,7 +13,10 @@
 import inspect, string
 import Instructions
 
-from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, dblQuotedString, ZeroOrMore, ParseException, opAssoc, operatorPrecedence
+from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, dblQuotedString, ZeroOrMore, ParseException, opAssoc, operatorPrecedence, delimitedList, ParserElement
+
+#enable packrat parsing for better performance
+ParserElement.enablePackrat()
 
 class InvalidMnemonicException(Exception): #FIXME: should extend UserCodeException
     pass
@@ -82,11 +85,12 @@ class Tokens:
     allowed_opers = \
         [
             (Literal('-'), 1, opAssoc.RIGHT), #sign
-            (Literal('^'), 2, opAssoc.RIGHT), #exponentiation
             (Literal('~'), 1, opAssoc.RIGHT), #bitwise inversion
             (oneOf('<<  >>'), 2, opAssoc.LEFT), #bit shift operators
-            (oneOf('* / &'), 2, opAssoc.LEFT), #multiplication, division, and bitwise AND
-            (oneOf('+ - |'), 2, opAssoc.LEFT) #addition, subtraction, and bitwise OR
+            (oneOf('* /'), 2, opAssoc.LEFT), #multiplication, division, and bitwise AND
+            (oneOf('| ^'), 2, opAssoc.LEFT), #bitwise OR, bitwise XOR
+            (Literal('%'), 2, opAssoc.LEFT), #modulus operator
+            (oneOf('+ -'), 2, opAssoc.LEFT) #addition, subtraction
         ]
 
     #a recursive grammar which allows operations to be performed on numbers

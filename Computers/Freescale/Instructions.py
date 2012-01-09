@@ -404,7 +404,7 @@ class ORG(HCS08_PseudoOp):
 
         #if it's not an integer, something went wrong
         if not isinstance(origin, int):
-            print "not int?" #TODO: throw exception
+            raise InvalidAddressingException('The argument to an ORG psuedo-op must be absolute; that is, it cannot be expressed in terms of anything except for numbers and EQU constants. (You provided ' + repr(origin) + ')');
 
         #adjut the location pointer
         assembler.location = origin
@@ -486,6 +486,7 @@ class DC(HCS08_PseudoOp):
 
             for item in defines.asList():
 
+
                 #if the item is an ASCII string
                 if len(item) == 2 and item[0] == '"':
 
@@ -509,6 +510,7 @@ class DC(HCS08_PseudoOp):
                     raw_defines.extend(raw)
 
         except TypeError as e:
+            print defines
             raise InvalidAddressingException('One or more of your ' + cls.shorthand() + ' statements is malformed, near ' + repr(item) + ' [Debug information:' + repr(e) + ']' )
 
 
