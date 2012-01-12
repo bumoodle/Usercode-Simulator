@@ -33,7 +33,7 @@ def _machine_codes_standard(suffix, include_imm=True):
     return machine_codes
 
 
-def _machine_codes_axh_inherent(suffix, include_h = False):
+def _machine_codes_axh_inherent(suffix, h_suffix = None):
     """
         Helper method which generates a normal set of machine codes for AXH inherent values.
     """
@@ -49,9 +49,9 @@ def _machine_codes_axh_inherent(suffix, include_h = False):
                 'sp1':  [0x9E, 0x60 + suffix]
             }
 
-    #if include_h is true, then add the machine code for H
-    if include_h:
-        machine_codes['inhh'] = [0x80 + suffix]
+    #if a suffix for inherent-h mode is provided, use it
+    if h_suffix is not None:
+        machine_codes['inhh'] = [0x80 + h_suffix]
 
     #return the newly generated machine codes
     return machine_codes
@@ -64,14 +64,14 @@ def _machine_codes_bit_operation(prefix, is_clear):
     #and return the set of machine codes for a bit operation
     return \
             {
-                'dirb0': [(0x1 * prefix) + suffix],
-                'dirb1': [(0x1 * prefix) + suffix + 2],
-                'dirb2': [(0x1 * prefix) + suffix + 4],
-                'dirb3': [(0x1 * prefix) + suffix + 6],
-                'dirb4': [(0x1 * prefix) + suffix + 8],
-                'dirb5': [(0x1 * prefix) + suffix + 10],
-                'dirb6': [(0x1 * prefix) + suffix + 12],
-                'dirb7': [(0x1 * prefix) + suffix + 14]
+                'dirb0': [(0x10 * prefix) + suffix],
+                'dirb1': [(0x10 * prefix) + suffix + 2],
+                'dirb2': [(0x10 * prefix) + suffix + 4],
+                'dirb3': [(0x10 * prefix) + suffix + 6],
+                'dirb4': [(0x10 * prefix) + suffix + 8],
+                'dirb5': [(0x10 * prefix) + suffix + 10],
+                'dirb6': [(0x10 * prefix) + suffix + 12],
+                'dirb7': [(0x10 * prefix) + suffix + 14]
             }
 
 def _machine_codes_jump_operation(suffix):
@@ -161,12 +161,12 @@ class HCS08_Instruction(HCS08_Operation):
 
             #if the operand is larger than a byte, split it
             elif operand > 255:
-                code = cls.machine_codes[mode_word]
+                code = cls.machine_codes[mode_word][:]
                 code.extend(split_word(operand))
 
             #otherwise, add it directly
             else:
-                code = cls.machine_codes[mode_byte]
+                code = cls.machine_codes[mode_byte][:]
                 code.append(operand)
 
             #and return the final code
@@ -224,7 +224,7 @@ class HCS08_Instruction(HCS08_Operation):
         """
 
         #get the stack offset
-        offset = parse_operand(tokens['stack_offset'])
+        offset = parse_operand(tokens['stack_offset'], symbol_list)
 
         #and return the appropriate machine code
         return cls.add_operand_to_code('sp2', 'sp1', offset)
@@ -253,7 +253,7 @@ class HCS08_Instruction(HCS08_Operation):
 
             #handle stack offset
             elif 'stack_offset' in tokens:
-                cls.get_machine_code_stack_offset(tokens, symbol_list)
+                return cls.get_machine_code_stack_offset(tokens, symbol_list)
 
             #if no operands were speicifed, assume inherent addressing mode
             else:
@@ -284,15 +284,15 @@ class HCS08_Instruction_with_AXH_Inherent(HCS08_Instruction):
 
                 #target is A
                 if mnemonic[-1] == 'a':
-                    return cls.machine_codes['inha']
+                    return cls.machine_codes['inha'][:]
 
                 #target is X
                 elif mnemonic[-1] == 'x':
-                    return cls.machine_codes['inhx']
+                    return cls.machine_codes['inhx'][:]
 
                 #target is H
                 elif mnemonic[-1] == 'h':
-                    return cls.machine_codes['inhh']
+                    return cls.machine_codes['inhh'][:]
 
         #if those modes weren't provided, throw an error
         except KeyError:
@@ -300,6 +300,8 @@ class HCS08_Instruction_with_AXH_Inherent(HCS08_Instruction):
 
         #deletgate to the parent class
         return super(HCS08_Instruction_with_AXH_Inherent, cls).assemble(tokens, symbol_list, assembler)
+
+
 
 class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
 
@@ -310,7 +312,12 @@ class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
         """
 
         #get the machine code for the simple
-        base = super(CBEQ, cls).assemble(tokens, symbol_list, assembler)
+        base = super(HCS08_Constructed_Branch, cls).assemble(tokens, symbol_list, assembler)
+
+        #if we don't have a target, but have a basic direct addressing scheme, intepret the direct item as a target
+        #(for speed, the parser is ignorant of supported addressing modes)
+        if 'target' not in tokens and tokens.keys() == ['mnemonic', 'direct']:
+            tokens['target'] = tokens['direct']
 
         #and append the branch offset
         target = parse_operand(tokens['target'], symbol_list)
@@ -320,7 +327,7 @@ class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
             target = (target - (assembler.location + len(base) + 1)) % 255 #location = base location + the length of the instruction without the rel, + 1(the length of the rel)
 
         #append the new offset to the existing instruction
-        base.append(offset)
+        base.append(target)
 
         #and return it
         return base
@@ -589,7 +596,6 @@ class ADC(HCS08_Instruction):
         Add with carry instruction.
     """
     mnemonics = ['adc']
-
     machine_codes = _machine_codes_standard(0x9)
 
     @classmethod
@@ -634,11 +640,11 @@ class AIS(HCS08_Instruction):
     machine_codes = { 'imm': [0xA7] }
 
 
-class AIS(HCS08_Instruction):
+class AIX(HCS08_Instruction):
     """
-        AIS (Add Immediate to the Stack Pointer) instruction.
+        AIX (Add Immediate to the Stack Pointer) instruction.
     """
-    mnemonics = ['ais']
+    mnemonics = ['aix']
     machine_codes =  { 'imm': [0xAF] }
 
 
@@ -697,8 +703,8 @@ class BEQ(HCS08_Simple_Branch):
     """
         BEQ (Branch if Equal)
     """
-    mnemonics = ['bcs']
-    machine_codes = { 'rel': [0x25] }
+    mnemonics = ['beq']
+    machine_codes = { 'rel': [0x27] }
 
 class BGE(HCS08_Simple_Branch):
     """
@@ -881,8 +887,8 @@ class BSR(HCS08_Simple_Branch):
         BSR (Branch to Subroutine)
         Branches if I=0.
     """
-    mnemonics = ['brn']
-    machine_codes = { 'rel': [0x21] }
+    mnemonics = ['bsr']
+    machine_codes = { 'rel': [0xAD] }
 
     #TODO: override execute
 
@@ -893,6 +899,24 @@ class CBEQ(HCS08_Constructed_Branch):
     """
     mnemonics = ['cbeq', 'cbeqa', 'cbeqx']
     machine_codes = _machine_codes_axh_inherent(0x01)
+
+    @classmethod
+    def assemble(cls, tokens, symbol_list, assembler):
+        """
+            Assembles the CBEQ instruction, which has a special case in which its inherent modes require multiple arguments.
+        """
+        #get the base case machine codes, for the non-special cases
+        base = super(CBEQ, cls).assemble(tokens, symbol_list, assembler)
+
+        #if this is one of our inherently addressed instructions
+        if base[0] in (cls.machine_codes['inha'][0], cls.machine_codes['inhx'][0]):
+
+            #insert the immediate before the branch target
+            base.insert(1, parse_operand(tokens['immediate'], symbol_list))
+
+
+        #return the (possibly corrected) machine code
+        return base
 
 class CLC(HCS08_Instruction):
     """
@@ -915,7 +939,7 @@ class CLR(HCS08_Instruction_with_AXH_Inherent):
         Clears a given register or memory address.
     """
     mnemonics = ['clr', 'clra', 'clrx', 'clrh']
-    machine_codes = _machine_codes_axh_inherent(0xF, include_h=True)
+    machine_codes = _machine_codes_axh_inherent(0xF, h_suffix=0xC)
 
 class CMP(HCS08_Instruction):
     """
@@ -941,8 +965,8 @@ class CPHX(HCS08_Instruction):
             {
                 'imm2': [0x65],
                 'dir':  [0x75],
-                'ext':  [0x65],
-                'sp1':  [0x9E, 0x63]
+                'ext':  [0x3E],
+                'sp1':  [0x9E, 0xF3]
             }
 
 
@@ -988,7 +1012,7 @@ class EOR(HCS08_Instruction):
         Exclusive OR Memory with Accumulator
     """
     mnemonics = ['eor']
-    machine_codes = _machine_codes_axh_inherent(0x8)
+    machine_codes = _machine_codes_standard(0x8)
 
 class INC(HCS08_Instruction_with_AXH_Inherent):
     """
@@ -1031,8 +1055,8 @@ class LDHX(HCS08_Instruction):
                 'dir':  [0x55],
                 'ext':  [0x32],
                 'ix2':  [0x9E, 0xBE],
-                'ix1':  [0x9E, 0xAE],
-                'ix' :  [0x9E, 0xCE],
+                'ix1':  [0x9E, 0xCE],
+                'ix' :  [0x9E, 0xAE],
                 'sp1':  [0x9E, 0xFE],
             }
 
@@ -1107,7 +1131,7 @@ class NEG(HCS08_Instruction_with_AXH_Inherent):
         Negate via Two's Compliment
     """
 
-    mnemonics = ['neg', 'nega', 'negh']
+    mnemonics = ['neg', 'nega', 'negx']
     machine_codes = _machine_codes_axh_inherent(0x0)
 
 
@@ -1175,7 +1199,7 @@ class ROR(HCS08_Instruction_with_AXH_Inherent):
         Rotate Right through Carry
     """
 
-    mnemonics = ['ror', 'rora', 'rolx']
+    mnemonics = ['ror', 'rora', 'rorx']
     machine_codes = _machine_codes_axh_inherent(0x6)
 
 
@@ -1193,6 +1217,15 @@ class RTI(HCS08_Instruction):
     """
     mnemonics = ['rti']
     machine_codes = { 'inh': [0x80] }
+
+
+class RTS(HCS08_Instruction):
+    """
+        Return from Subroutine
+    """
+    mnemonics = ['rts']
+    machine_codes = { 'inh': [0x81] }
+
 
 
 class SBC(HCS08_Instruction):
@@ -1291,7 +1324,7 @@ class TPA(HCS08_Instruction):
     """
         Transfer CCR to Accumulator
     """
-    mnemonics = ['tca']
+    mnemonics = ['tpa']
     machine_codes = { 'inh': [0x85] }
 
 

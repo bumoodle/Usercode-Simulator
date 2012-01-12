@@ -72,7 +72,7 @@ class Tokens:
     label = ~(mnemonic) + ~(dc_pseudo_op) +  Word(alphas, alphanums + '_') + Optional(Literal(':')).suppress()
 
     #reference to a previously defined label
-    reference = Word(alphas, alphanums + '_')
+    reference = ~CaselessLiteral('SP') + ~CaselessLiteral('X') + Word(alphas, alphanums + '_')
 
     #todo: allow processing of numeric literals
     operand = number ^ reference
@@ -117,7 +117,7 @@ class Tokens:
     bit_suffix = bitNumber.setResultsName('bit') + Literal(',').suppress() + operand_expression.setResultsName('direct') + Literal(',').suppress() + operand_expression.setResultsName('target')
 
     #loop primitive / move suffixes
-    branch_suffix = (indexed_suffix | immediate_suffix | direct_suffix | stack_suffix) + Literal(',').suppress() + operand_expression.setResultsName('target')
+    branch_suffix = (indexed_suffix | immediate_suffix | stack_suffix | direct_suffix) + Literal(',').suppress() + operand_expression.setResultsName('target')
 
     #
     # Pseudo-Op Suffix
@@ -137,7 +137,7 @@ class Tokens:
     comment = Literal(';') + restOfLine
 
     #core instruction definition
-    non_dc_instruction = mnemonic.setResultsName('mnemonic') + Optional(bit_suffix | branch_suffix | indexed_suffix | immediate_suffix | direct_suffix | stack_suffix )
+    non_dc_instruction = mnemonic.setResultsName('mnemonic') + Optional(bit_suffix | branch_suffix | indexed_suffix | immediate_suffix | stack_suffix | direct_suffix )
 
     #define constant definition
     dc_instruction = dc_pseudo_op.setResultsName('mnemonic') + dc_suffix
@@ -206,8 +206,7 @@ class Assembler(object):
             self.process_line(line)
 
         #third pass: resolve all of the symbols into concrete numeric values, so what's left is true machine code
-        #TODO
-
+        self.resolve_symbols(self.flash)
 
         #DEBUG
 
@@ -224,6 +223,15 @@ class Assembler(object):
                     print hex(i) + '\t\t', hex(self.flash[i])
                 except TypeError:
                     print self.flash[i]
+
+
+
+
+    def resolve_symbols(self, program):
+        """
+            Resolves any unknown symbols in a given block of program memory.
+        """
+        pass
 
 
 
