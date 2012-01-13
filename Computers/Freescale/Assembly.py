@@ -9,16 +9,33 @@
 
 """
 
+import sys
+sys.path.append('../..');
+
+from Computers.Exceptions import UserCodeException
+
 
 import inspect, string
 import Instructions
+
 
 from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, dblQuotedString, ZeroOrMore, ParseException, opAssoc, operatorPrecedence, delimitedList, ParserElement
 
 #enable packrat parsing for better performance
 ParserElement.enablePackrat()
 
-class InvalidMnemonicException(Exception): #FIXME: should extend UserCodeException
+
+
+class InvalidMnemonicException(UserCodeException):
+    """
+        Standard exception which indicates that the user provided a mnemonic not supported by this computer.
+    """
+    pass
+
+class UnresolvedSymbolException(UserCodeException):
+    """
+        Exception which indicates the user provided a symbol whose value could not be determined; such as a constant they forgot to define.
+    """
     pass
 
 def get_all_mnemonics(predicate = lambda x : True):
@@ -208,31 +225,64 @@ class Assembler(object):
         #third pass: resolve all of the symbols into concrete numeric values, so what's left is true machine code
         self.resolve_symbols(self.flash)
 
-        #DEBUG
+        ##DEBUG
 
-        print "SYMBOLS:"
+        #print "SYMBOLS:"
 
-        for i in self.symbols:
-            print i + '\t\t', hex(self.symbols[i])
+        #for i in self.symbols:
+        #    print i + '\t\t', hex(self.symbols[i])
 
-        print "\n\nFLASH:"
+        #print "\n\nFLASH:"
 
-        for i in self.flash:
-            if self.flash[i] != 0:
-                try:
-                    print hex(i) + '\t\t', hex(self.flash[i])
-                except TypeError:
-                    print self.flash[i]
+        #for i in self.flash:
+        #    if self.flash[i] != 0:
+        #        try:
+        #            print hex(i) + '\t\t', hex(self.flash[i])
+        #        except TypeError:
+        #            print self.flash[i]
 
 
 
 
     def resolve_symbols(self, program):
         """
-            Resolves any unknown symbols in a given block of program memory.
+            Resolves any unknown symbols in a given block of program memory (a dictionary).
         """
-        pass
 
+        #for each byte in the program memory
+        for byte in program:
+
+            try:
+
+                #if the given value is a placeholder for a single-byte symbol
+                if isinstance(program[byte], str):
+
+                    #try and use the value from the symbols table
+                    program[byte] = self.symbols[program[byte]]
+
+                #if the given value is placeholder for part of a mutli-byte symbol
+                elif isinstance(program[byte], tuple):
+
+                    #extract the symbol name and byte number
+                    symbol_name, byte_num = program[byte]
+
+                    #if we have a relative placeholder, then compute the correct offset
+                    if isinstance(byte_num, tuple):
+
+                        #unpack the relative base, which indicates which address the offset should be calculated with respect to
+                        _, base = byte_num
+
+                        #replace the placeholder with the amount that would need to be added to base to reach the correct value
+                        program[byte] = base - self.symbols[symbol_name]
+
+                    #otherwise, we have a placeholder which repesents part of a multi-byte value
+                    else:
+
+                        #and try to use the appropriate section from a multi-byte value specified in the symbols table
+                        program[byte] = (self.symbols[symbol_name] >> (8 * byte_num)) & 0xFF;
+
+            except KeyError as e:
+                raise UnresolvedSymbolException('Could not determine the value of the symbol ' + repr(e.arguments) + '. Are you sure you defined it?')
 
 
     def process_line(self, tokens):

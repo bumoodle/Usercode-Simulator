@@ -8,7 +8,7 @@
 
 
 
-from utils import parse_number, parse_operand, split_word, is_numeric, fit_to_size
+from utils import parse_number, parse_operand, split_word, is_numeric, fit_to_size, merge_word, sign_extend
 
 
 def _machine_codes_standard(suffix, include_imm=True):
@@ -85,6 +85,46 @@ def _machine_codes_jump_operation(suffix):
                 'ix' : [0xF0 + suffix],
             }
 
+def _calculate_branch_offset(target_token, symbol_list, assembler, instruction_length=2):
+    """
+        Calculate the correct branch offset given the target of a jump, which may be an address or label.
+
+        Result may be a relative placeholder, if the target label is not defined.
+    """
+
+    #and append the branch offset
+    target = parse_operand(target_token, symbol_list)
+
+    #if we were provided a label, rather than an offset, we have to calculate its offset
+    if not is_numeric(target_token):
+
+        #resolve the address of the next instruction, which should be equal to the current location, plus the length of this instruction
+        #(the length of this instruction is equal to the length of the base instruction, plus the one byte we will be adding to it)
+        next_instruction = (assembler.location + instruction_length)
+
+        #if the target resolved to an integer, then compute the correct offset in relation to the next instruction
+        if isinstance(target, int):
+            target = (target - next_instruction)
+
+            #verify the branch is in range (it should almost _always_ be)
+            if target > 127 or target < -128:
+                raise InvalidBranchException ('Target ' + target_token + ' cannot be reached by the branch instruction, as it is out of range. Consult the course text for more information.')
+
+            #if the branch is in range, normalize it so it falls within the 0-256 range
+            else:
+                target = target % 256
+
+        #otherwise, we have a placeholder
+        else:
+
+            #add a relative tag to the placeholder, which indicates that the placeholder should resolve to an address relative to the next instruction
+            target = (target, ('R', next_instruction))
+
+
+    #return the computed target
+    return target
+
+
 
 class InvalidAddressingException(Exception):
     """
@@ -120,6 +160,10 @@ class HCS08_Operation(object):
         else:
             return repr(cls)
 
+    @classmethod
+    def get_operand(cls):
+        return ()
+
 
 class HCS08_PseudoOp(HCS08_Operation):
     """
@@ -138,6 +182,7 @@ class HCS08_Instruction(HCS08_Operation):
             Helper method which adds an operand to the machine code for this instruction (under the given mode).
         """
 
+
         #get the base machine code for this addressing mode
         try:
 
@@ -145,6 +190,20 @@ class HCS08_Instruction(HCS08_Operation):
             if isinstance(operand, list):
                 code = cls.machine_codes[mode_word][:]
                 code.extend(operand)
+
+            #if the operand is a placeholder tuple:
+            elif isinstance(operand, tuple):
+
+                #if the placeholder uses relative addressing, use byte mode
+                if isinstance(operand[1], tuple):
+                    code = cls.machine_codes[mode_byte][:]
+
+                #otherwise, use word mode
+                else:
+                    code = cls.machine_codes[mode_word][:]
+
+                #then, add the placeholder directly
+                code.append(operand)
 
             #if the operand is a string, check to see if the instructions upports the mode_word
             elif isinstance(operand, str):
@@ -264,6 +323,62 @@ class HCS08_Instruction(HCS08_Operation):
             print tokens
             raise InvalidAddressingException('Invalid addressing mode ' + repr(e.args[0]).upper() + ' for instruction ' + cls.shorthand() + '.')
 
+
+    @classmethod
+    def get_operand(cls, address_mode, cpu):
+        """
+            Returns the correct operand for the given operation, given the CPU.
+        """
+
+        #handle immediate mode
+        if address_mode == 'imm':
+
+            #return the next byte directly
+            return (cpu.fetch_byte())
+
+        #16-bit immediate mode
+        elif address_mode == 'imm2':
+
+            #return the next two bytes
+            return (cpu.fetch_byte(), cpu.fetch_byte())
+
+        #direct addressing
+        elif address_mode == 'dir':
+
+            #get the next byte, as it gives us the RAM address in question
+            addr = cpu.fetch_byte()
+
+            #and return the byte at the RAM address in question
+            return (cpu.ram[addr])
+
+        #extended addressing
+        elif address_mode == 'ext':
+
+            #get the next two bytes, and merge them into a 16-bit RAM address
+            addr = merge_word(cpu.fetch_byte(), cpu.fetch_byte())
+
+            #return the byte at the RAM address in question
+            return (cpu.ram[addr])
+
+        #indexed  addressing
+        elif address_mode == 'ix':
+
+            #return the byte at the RAM address pointed to by the indexing register, HX
+            return (cpu.ram[cpu.get_HX()])
+
+        #index offset addressing (1 byte offset)
+        elif address_mode = 'ix1':
+
+            #retrieve the next byte, which is the index offset
+            offset = cpu.fetch_byte()
+
+            #calculate the target address, which is
+            addr =
+
+
+
+
+
 class HCS08_Instruction_with_AXH_Inherent(HCS08_Instruction):
     """
         Extension to the normal instruction which better supports inherent addressing of A/X.
@@ -319,12 +434,8 @@ class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
         if 'target' not in tokens and tokens.keys() == ['mnemonic', 'direct']:
             tokens['target'] = tokens['direct']
 
-        #and append the branch offset
-        target = parse_operand(tokens['target'], symbol_list)
-
-        #if we were provided a label, rather than an offset, calculate an offset
-        if not is_numeric(tokens['target']):
-            target = (target - (assembler.location + len(base) + 1)) % 255 #location = base location + the length of the instruction without the rel, + 1(the length of the rel)
+        #calculate the correct branch offset given the target
+        target = _calculate_branch_offset(tokens['target'], symbol_list, assembler, instruction_length = len(base) + 1)
 
         #append the new offset to the existing instruction
         base.append(target)
@@ -343,12 +454,8 @@ class HCS08_Simple_Branch(HCS08_Instruction):
             Assemble a Simple Branch instruction.
         """
 
-        #get the location from the assembly tokens
-        offset = parse_operand(tokens['direct'], symbol_list)
-
-        #if we provided a label (rather than a true branch offset), use it to compute an offset
-        if not is_numeric(tokens['direct']):
-            offset = (offset - (assembler.location + 2)) % 256  #here, two bytes is the size of this instruction
+        #compute the branch offset given the target
+        offset = _calculate_branch_offset(tokens['direct'], symbol_list, assembler)
 
         #simple branches _always_ use the relative instruction type
         return cls.add_operand_to_code(None, 'rel', offset)

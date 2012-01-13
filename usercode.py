@@ -37,6 +37,10 @@ def main():
     if args.system in ('hcs08', 'MC9S08QG8'):
         system = MC9S08QG8(code);
 
+    system.step()
+    system.step()
+    system.step()
+
 
 
 #if this is being called as a library, call main

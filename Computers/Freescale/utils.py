@@ -218,20 +218,6 @@ def parse_operand(op, symbols_list, size=None):
     else:
         return sized_placeholder(op, size)
 
-    ##UNREACHED: old code
-
-    #if the operand is numeric, return its value
-    if is_numeric(op):
-        return fit_to_size(parse_number(op), size)
-
-    #otherwise, look for it in the symbols list
-    elif op in symbols_list:
-        return fit_to_size(symbols_list[op], size)
-
-    #if it's not there, return the operand name
-    else:
-        return sized_placeholder(op, size)
-
 
 def split_word(number):
     """
@@ -243,4 +229,23 @@ def split_word(number):
 
     return fit_to_size(number, 2)
 
+def merge_word(msb, lsb):
+    """
+        Merges two bytes into a 16-bit word.
+    """
+
+    return msb << 8 | lsb;
+
+def sign_extend(lsb):
+    """
+        Sign-extends a given byte into a 16-bit word, so signed numbers retain their value. For example, -1 (0xFF) would remain -1 (0xFFFF).
+    """
+
+    #if the number is negative, one-extend it
+    if lsb > 128:
+        return 0xFF00 | lsb;
+
+    #otherwise, zero-extend it
+    else:
+        return lsb;
 
