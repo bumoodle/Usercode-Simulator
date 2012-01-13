@@ -217,6 +217,37 @@ class HCS08(Computer):
         #and execute the instruction in question
         instruction.execute(address_mode, self, operand)
 
+    def get_CCR(self):
+        """
+            Returns a byte which contains all of the system's flags as one contiguous Condition Code Register.
+        """
+
+        #start off with 0b01100000, as the two reserved bits are always 1
+        ccr = 96
+
+        #and OR in each of the flags, according to their place
+        ccr |= self.V << 7
+        ccr |= self.H << 4
+        ccr |= self.I << 3
+        ccr |= self.N << 2
+        ccr |= self.Z << 1
+        ccr |= self.C
+
+        #return the newly constructed CCR
+        return ccr
+
+    def set_CCR(self, ccr):
+        """
+            Sets each of the flags using a single-byte condition code register.
+        """
+
+        self.V = bool(ccr & (1 << 7))
+        self.H = bool(ccr & (1 << 4))
+        self.I = bool(ccr & (1 << 3))
+        self.N = bool(ccr & (1 << 2))
+        self.Z = bool(ccr & (1 << 1))
+        self.C = bool(ccr & 1)
+
 
     def get_HX(self):
         """
@@ -329,12 +360,18 @@ class HCS08(Computer):
             raise ExecutionException('The CPU tried to read from a non-existant register ' + repr(identifier) + '. This is likely an issue with the simulator; please bring this error to an instructor\'s attention.')
 
 
-    def update_NZ(self):
+    def update_NZ(self, V = None):
         """
             Update the N (negative) and Z (zero) flags according to the current accumulator value.
+
+            If clear_V has been set, the V flag will be cleared, as well.
         """
         self.N = (self.A > 127)
         self.Z = (self.A == 0)
+
+        #if a value for V was specified as well, use it
+        if V is not None:
+            self.V = V
 
 
     def fetch_byte(self):
