@@ -6,8 +6,7 @@
 
 """
 
-
-
+from Computers.Exceptions import UserCodeException, ExecutionException
 from utils import parse_number, parse_operand, split_word, is_numeric, fit_to_size, merge_word, sign_extend
 
 
@@ -126,9 +125,15 @@ def _calculate_branch_offset(target_token, symbol_list, assembler, instruction_l
 
 
 
-class InvalidAddressingException(Exception):
+class InvalidAddressingException(UserCodeException):
     """
         Specified when a given instruction is supplied with an invalid addressing mode.
+    """
+    pass
+
+class ExecutionAddressingException(ExecutionException):
+    """
+        Execution thrown when an invalid addressing mode is requested at runtime.
     """
     pass
 
@@ -154,22 +159,30 @@ class HCS08_Operation(object):
         pass
 
     @classmethod
+    def read_operand(cls, address_mode, cpu):
+        return ()
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+        pass
+
+    @classmethod
     def shorthand(cls):
         if len(cls.mnemonics) > 0:
             return cls.mnemonics[0].upper()
         else:
             return repr(cls)
 
-    @classmethod
-    def get_operand(cls):
-        return ()
-
 
 class HCS08_PseudoOp(HCS08_Operation):
     """
         Parent class for all psuedo-operations.
     """
-    pass
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+        raise ExecutionException('Something went wrong, and the simulator tried to execute a ' + cls.shorthand() + ' pseudo-operation. This is likely an error in the simulator; please bring this to your instructor\'s attention.')
+
 
 class HCS08_Instruction(HCS08_Operation):
     """
@@ -325,7 +338,7 @@ class HCS08_Instruction(HCS08_Operation):
 
 
     @classmethod
-    def get_operand(cls, address_mode, cpu):
+    def read_operand(cls, address_mode, cpu):
         """
             Returns the correct operand for the given operation, given the CPU.
         """
@@ -334,13 +347,13 @@ class HCS08_Instruction(HCS08_Operation):
         if address_mode == 'imm':
 
             #return the next byte directly
-            return (cpu.fetch_byte())
+            return ((None, cpu.fetch_byte()))
 
         #16-bit immediate mode
         elif address_mode == 'imm2':
 
             #return the next two bytes
-            return (cpu.fetch_byte(), cpu.fetch_byte())
+            return ((None, cpu.fetch_word()))
 
         #direct addressing
         elif address_mode == 'dir':
@@ -349,39 +362,70 @@ class HCS08_Instruction(HCS08_Operation):
             addr = cpu.fetch_byte()
 
             #and return the byte at the RAM address in question
-            return (cpu.ram[addr])
+            return ((addr, cpu.get_by_identifier(addr)))
 
         #extended addressing
         elif address_mode == 'ext':
 
             #get the next two bytes, and merge them into a 16-bit RAM address
-            addr = merge_word(cpu.fetch_byte(), cpu.fetch_byte())
+            addr = cpu.fetch_word()
 
             #return the byte at the RAM address in question
-            return (cpu.ram[addr])
+            return ((addr, cpu.get_by_identifier(addr)))
 
         #indexed  addressing
         elif address_mode == 'ix':
 
             #return the byte at the RAM address pointed to by the indexing register, HX
-            return (cpu.ram[cpu.get_HX()])
+            return ((cpu.get_HX(), cpu.get_by_identifier(cpu.get_HX())))
 
-        #index offset addressing (1 byte offset)
-        elif address_mode = 'ix1':
+        #index or stack pointer offset
+        elif address_mode in ('ix1', 'ix2', 'sp1', 'sp2'):
 
-            #retrieve the next byte, which is the index offset
-            offset = cpu.fetch_byte()
+            #if we're in one of the two byte-offset modes
+            if address_mode in ('ix1', 'sp1'):
 
-            #calculate the target address, which is
-            addr =
+                #retrieve and sign extend the next byte, which is the index offset
+                offset = sign_extend(cpu.fetch_byte())
+
+            #otherwise, fetch the offset directly from the stack
+            else:
+                offset = cpu.fetch_word()
+
+            #if this is an index-offset mode, use the value of HX as the base address
+            if address_mode in ('ix1', 'ix2'):
+                base = cpu.get_HX()
+
+            #otherwise, use the value in the SP
+            else:
+                base = cpu.SP
 
 
+            #calculate the 16-bit target address, allowing for rollover, so signed addition works
+            addr = (base + offset) % 0xFFFF
+
+            #return the byte at the computed address
+            return ((addr, cpu.get_by_identifier(addr)))
+
+        #if this in inherent mode, return no operand
+        elif address_mode == 'inh':
+                return ()
+
+        #if none of the above matched, throw an InvalidAddressingExc
+        else:
+            raise ExecutionException('An error occurred, in which the ' + cls.shorthand() + ' operand was requested with the "' + address_mode + '" addressing mode, which isn\'t supported. This is likely an error in the simulator; please bring this to your instructor\'s attention.')
+
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+        raise ExecutionException('The simulator is missing the code necessary to execute ' + cls.shorthand() + ' instructions. This is likely an error in the simulator; please bring this to your instructor\'s attention.')
 
 
 
 class HCS08_Instruction_with_AXH_Inherent(HCS08_Instruction):
     """
-        Extension to the normal instruction which better supports inherent addressing of A/X.
+        Extension to the normal instruction which better supports inherent addressing of A/X/H.
+
     """
 
     @classmethod
@@ -417,6 +461,28 @@ class HCS08_Instruction_with_AXH_Inherent(HCS08_Instruction):
         return super(HCS08_Instruction_with_AXH_Inherent, cls).assemble(tokens, symbol_list, assembler)
 
 
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+        """
+            Gets the operand for a given instruction, with support for inha, inhx, and inhh addressing modes.
+        """
+
+        #Inherent Accumulator mode: return the accumulator's value as the operand
+        if address_mode == 'inha':
+            return (('A', cpu.A))
+
+        #Inherent X mode: return X's value as the operand
+        elif address_mode == 'inhx':
+            return (('X', cpu.X))
+
+        #Inherent H mode: return H's value as the operand
+        elif address_mode == 'inhh':
+            return (('H', cpu.H))
+
+        #if a non-inherent addressing mode was specified, delegate to the base class
+        else:
+            return super(HCS08_Instruction_with_AXH_Inherent, cls).read_operand(address_mode, cpu)
+
 
 class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
 
@@ -443,6 +509,15 @@ class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
         #and return it
         return base
 
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+
+        #get the operand for the base class
+        base = super(HCS08_Constructed_Branch, cls).read_operand(address_mode, cpu)
+
+        #and return it, plus a sign extended single byte, which encodes the branch offset
+        return base + (None, sign_extend(cpu.fetch_byte()))
+
 
 
 class HCS08_Simple_Branch(HCS08_Instruction):
@@ -460,17 +535,25 @@ class HCS08_Simple_Branch(HCS08_Instruction):
         #simple branches _always_ use the relative instruction type
         return cls.add_operand_to_code(None, 'rel', offset)
 
-    def execute(cls, machine, operand):
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+
+        #simple branches always directly provide a branch offset, which should be sign extended
+        return (None, sign_extend(cpu.fetch_byte()))
+
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
         """
             Execute the simple branch instruction.
         """
 
         #if the branch condition is met
         if cls.predicate():
-            self.PC += operand
+            cpu.PC += operand
 
-
-    def predicate():
+    @classmethod
+    def predicate(cls, cpu):
         """
             The conditions under which the given branch is executed.
         """
@@ -496,6 +579,32 @@ class HCS08_Bit_Operation(HCS08_Instruction):
         except KeyError:
             raise InvalidAddressingException('The specified ' + cls.shorthand() + 'operation is addressed incorrectly or malformed. Check the CPU quick reference, and try again.');
 
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+
+        #bit operations are always directly addressed; get a single byte offset from the program
+        addr = cpu.fetch_byte()
+
+        #return the address directly, as bit operations affect RAM
+        return (addr, cpu.ram[addr])
+
+
+    @staticmethod
+    def get_mask_from_address_mode(cls, address_mode):
+        """
+            Returns a mask which only has the given bit in question high, where bit is determined by the addressing mode.
+            This is primarily used to calculate the result of bit operations.
+
+            For example, dirb2 would produce 0b00000100.
+        """
+
+        #TODO: abstract these to a constant somewhere
+
+        #get the bit number in question
+        bit_no = ['dirb0', 'dirb1', 'dirb2', 'dirb3', 'dirb4', 'dirb5', 'dirb6', 'dirb7'].index(address_mode)
+
+        #and build the appropriate mask
+        return 1 << bit_no
 
 
 class HCS08_Bit_Branch(HCS08_Instruction):
@@ -526,6 +635,18 @@ class HCS08_Bit_Branch(HCS08_Instruction):
         except KeyError:
             raise InvalidAddressingException('The specified ' + cls.shorthand() + 'operation is addressed incorrectly or malformed. Check the CPU quick reference, and try again.');
 
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+
+        #bit branches have two "operands":
+        #a single direct value, from RAM
+        addr = cpu.ram[cpu.fetch_byte()]
+
+        #and a branch offset
+        offset = cpu.fetch_byte()
+
+        #return them, in that order
+        return ((addr, cpu.ram[addr]), (None, offset))
 
 
 class HCS08_Not_Implemented(HCS08_Instruction):
@@ -560,6 +681,7 @@ class ORG(HCS08_PseudoOp):
 
         #adjut the location pointer
         assembler.location = origin
+
 
 class DS(HCS08_PseudoOp):
     """
@@ -706,25 +828,25 @@ class ADC(HCS08_Instruction):
     machine_codes = _machine_codes_standard(0x9)
 
     @classmethod
-    def execute(cls, machine, operand):
+    def execute(cls, address_mode, machine, operand):
         """
             Execute the ADC instruction.
         """
 
         #calculate the flags
-        machine.C = (machine.A + operand + machine.carry) > 256;
+        machine.C = (machine.A + operand + machine.C) > 256;
 
         #get the carry from the 7th to 8th bit
-        carry_less = (machine.A & 0x7F) + (operand & 0x7F) + machine.carry > 127;
+        carry_less = (machine.A & 0x7F) + (operand & 0x7F) + machine.C > 127;
 
         #compute the signed overflow
         machine.V = machine.C ^ carry_less
 
         #compute the half carry
-        machine.H = (machine.A & 0x0F) + (operand & 0x0F) + machine.carry > 127;
+        machine.H = (machine.A & 0x0F) + (operand & 0x0F) + machine.C > 127;
 
         #finally, perform the operations
-        machine.A = (machine.A + operand + machine.carry) % 256;
+        machine.A = (machine.A + operand + machine.C) % 256;
 
         #set the negative flag according to the sign bit, and the zero flag if the result is zero
         machine.N = machine.A > 127;
@@ -738,6 +860,30 @@ class ADD(HCS08_Instruction):
     mnemonics = ['add']
     machine_codes = _machine_codes_standard(0xB)
 
+    @classmethod
+    def execute(cls, address_mode, machine, operand):
+
+        #extract the operand, discarding its adddress
+        _, operand = operand[0]
+
+        #calculate the flags
+        machine.C = (machine.A + machine.C) > 256;
+
+        #get the carry from the 7th to 8th bit
+        carry_less = (machine.A & 0x7F) + (operand & 0x7F) > 127;
+
+        #compute the signed overflow
+        machine.V = machine.C ^ carry_less
+
+        #compute the half carry
+        machine.H = (machine.A & 0x0F) + (operand & 0x0F)  > 127;
+
+        #finally, perform the operations
+        machine.A = (machine.A + operand) % 256;
+
+        #set the negative flag according to the sign bit, and the zero flag if the result is zero
+        cpu.update_NZ()
+
 
 class AIS(HCS08_Instruction):
     """
@@ -745,6 +891,16 @@ class AIS(HCS08_Instruction):
     """
     mnemonics = ['ais']
     machine_codes = { 'imm': [0xA7] }
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand, discarding its address
+        _, operand = operand[0]
+
+        #add the immediate to the stack
+        cpu.SP += operand;
+
 
 
 class AIX(HCS08_Instruction):
@@ -754,6 +910,15 @@ class AIX(HCS08_Instruction):
     mnemonics = ['aix']
     machine_codes =  { 'imm': [0xAF] }
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand, discarding its address
+        _, operand = operand[0]
+
+        #add the operand to HX
+        cpu.set_HX(cpu.get_HX() + operand)
+
 
 class AND(HCS08_Instruction):
     """
@@ -762,6 +927,17 @@ class AND(HCS08_Instruction):
     mnemonics = ['and']
     machine_codes = _machine_codes_standard(0x4)
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand, discarding its address
+        _, operand = operand[0]
+
+        #perform the logical AND
+        cpu.A &= operand
+
+        #and adjust the value of the N and Z flags
+        cpu.update_NZ()
 
 
 class ASL(HCS08_Instruction_with_AXH_Inherent):
@@ -770,6 +946,21 @@ class ASL(HCS08_Instruction_with_AXH_Inherent):
     """
     mnemonics = ['asl', 'asla', 'aslx']
     machine_codes = _machine_codes_axh_inherent(0x8)
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #split the operand into its target location and value
+        target, value = operand[0]
+
+        #set the C flag if the resulting shift left will "push" out a 1
+        cpu.C = value > 127
+
+        #calculate the result
+        result = (operand << 1) & 0xFF
+
+        #and store it in the appropriate location
+        cpu.set_by_identifier(target, result)
 
 
 class ASR(HCS08_Instruction_with_AXH_Inherent):
@@ -780,6 +971,22 @@ class ASR(HCS08_Instruction_with_AXH_Inherent):
     machine_codes = _machine_codes_axh_inherent(0x7)
 
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #split the operand into its target location and value
+        target, value = operand[0]
+
+        #set the C flag if the resulting shift right will "push" out a 1
+        cpu.C = value & 0x01
+
+        #calculate the result
+        result = opernad >> 1
+
+        #and store it to the appropriate location
+        cpu.set_by_identifier(target, result)
+
+
 class BCC(HCS08_Simple_Branch):
     """
         BCC (Branch if Carry Clear)
@@ -788,14 +995,33 @@ class BCC(HCS08_Simple_Branch):
     mnemonics = ['bcc']
     machine_codes = { 'rel': [0x24] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if the carry is false
+        return not cpu.C
+
 
 class BCLR(HCS08_Bit_Operation):
     """
-        BCC (Branch if Carry Clear)
-        Branches if the carry bit is clear.
+        BCLR- clears the appropriate bit of a byte in memory.
     """
     mnemonics = ['bclr']
     machine_codes = _machine_codes_bit_operation(prefix=1, is_clear=True)
+
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #split the operand into its target location and value
+        target, value = operand[0]
+
+        #get a bit mask from the address mode
+        mask = cls.get_mask_from_address_mode(address_mode)
+
+        #and use it to clear the appropriate bit
+        cpu.set_by_identifier(target, value & ~mask)
+
 
 class BCS(HCS08_Simple_Branch):
     """
@@ -805,6 +1031,12 @@ class BCS(HCS08_Simple_Branch):
     mnemonics = ['bcs']
     machine_codes = { 'rel': [0x25] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if the carry is true
+        return cpu.C
+
 
 class BEQ(HCS08_Simple_Branch):
     """
@@ -813,6 +1045,13 @@ class BEQ(HCS08_Simple_Branch):
     mnemonics = ['beq']
     machine_codes = { 'rel': [0x27] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branches if Z is set
+        return cpu.Z
+
+
 class BGE(HCS08_Simple_Branch):
     """
         BGE (Branch if Greater than or Equal To)
@@ -820,11 +1059,19 @@ class BGE(HCS08_Simple_Branch):
     mnemonics = ['bge']
     machine_codes = { 'rel': [0x90] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branches if >=, signed:  N^V
+        return not(cpu.N ^ cpu.V)
+
+
 class BGND(HCS08_Not_Implemented):
     """
         BGND: Enter background debug mode.
     """
     mnemonics = ['bgnd']
+
 
 
 class BGT(HCS08_Simple_Branch):
@@ -834,12 +1081,25 @@ class BGT(HCS08_Simple_Branch):
     mnemonics = ['bgt']
     machine_codes =  { 'rel': [0x92] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if >, signed
+        return not (cpu.Z or (cpu.N ^ cpu.V))
+
+
 class BHCC(HCS08_Simple_Branch):
     """
         BHCC (Branch if Half Carry Clear)
     """
     mnemonics = ['bhcc']
     machine_codes = { 'rel': [0x28] }
+
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if the half carry is clear
+        return not self.H
 
 class BHCS(HCS08_Simple_Branch):
     """
@@ -848,12 +1108,25 @@ class BHCS(HCS08_Simple_Branch):
     mnemonics = ['bhcs']
     machine_codes = { 'rel': [0x29] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if the half carry is set
+        return self.H
+
+
 class BHI(HCS08_Simple_Branch):
     """
         BHI (Branch if Higher)
     """
     mnemonics = ['bhi']
     machine_codes = { 'rel': [0x22] }
+
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if >, unsigned
+        return not (self.C or self.Z)
 
 
 class BHS(HCS08_Simple_Branch):
@@ -863,6 +1136,12 @@ class BHS(HCS08_Simple_Branch):
     mnemonics = ['bhs']
     machine_codes = { 'rel': [0x24] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if >=, unsigned
+        return not self.C
+
 class BIH(HCS08_Simple_Branch):
     """
         BIH (Branch if IRQ Pin High)
@@ -870,12 +1149,23 @@ class BIH(HCS08_Simple_Branch):
     mnemonics = ['bih']
     machine_codes = { 'rel': [0x2F] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #TODO: possibly implement the IRQ pin as a register in the future, or use the appropriate port input?
+        return False
+
 class BIL(HCS08_Simple_Branch):
     """
-        BIL (Branch of IRQ Pin Low)
+        BIL (Branch if IRQ Pin Low)
     """
     mnemonics = ['bil']
     machine_codes = { 'rel': [0x2E] }
+
+    @classmethod
+    def predicate(cls, cpu):
+        return False
+
 
 class BIT(HCS08_Instruction):
     """

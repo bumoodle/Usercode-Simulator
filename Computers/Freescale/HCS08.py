@@ -10,16 +10,10 @@ import inspect
 
 import Instructions
 
-from utils import merge_word
+from utils import merge_word, split_word
 from Computers.Definition import Computer
-from Computers.Exceptions import UserCodeException
+from Computers.Exceptions import UserCodeException, ExecutionException
 from Computers.Freescale.Assembly import Assembler
-
-class ExecutionException(UserCodeException):
-    """
-        Base for exceptions which occur during program execution.
-    """
-    pass
 
 class InvalidOpcodeException(ExecutionException):
     """
@@ -27,7 +21,7 @@ class InvalidOpcodeException(ExecutionException):
     """
     pass
 
-class InvalidMemoryException(ExecutionException)
+class InvalidMemoryException(ExecutionException):
     """
         Exception which is thrown if the CPU attempts read from or write to non-existant memory.
     """
@@ -220,14 +214,112 @@ class HCS08(Computer):
         #read the operand
         operand = instruction.read_operand(address_mode, self)
 
+        print instruction, address_mode, operand
 
-    def get_HX():
+
+    def get_HX(self):
         """
             Returns the value of HX (the system indexing register) as a 16-bit word.
         """
 
         #merge H and X to form HX, the 16-bit indexing register
         return merge_byte(self.H, self.X)
+
+    def set_HX(self, value):
+        """
+            Sets the value of the H and X registers as a single 16-bit unit.
+        """
+
+        #split the value into a MSB and LSB, and assign those to H and X respectively
+        self.H, self.X = split_word(value)
+
+
+    def set_ram_byte(self, addr, value):
+        """
+            Sets a value in RAM, with checks. Requires ram to be initialized.
+        """
+
+        #if the address is not within initialized ram
+        if addr not in self.ram:
+            raise InvalidMemoryException('Tried to write to address ' + repr(addr) + ', which does not exist in valid RAM.')
+
+        #set the value
+        self.ram[addr] = value % 256
+
+    def set_ram_word(self, addr, word):
+        """
+            Sets a word in RAM, with checks. Requires ram to be initialized.
+        """
+
+        #split the word into two seperate bytes
+        msb, lsb = split_word(word)
+
+        #and write each of the two bytes, in big endian order:
+        self.set_ram_byte(addr, msb)
+        self.set_ram_byte(addr + 1, lsb)
+
+
+    def set_by_identifier(self, identifier, value, is_word=False):
+        """
+            Sets a register or RAM value by its name, or address.
+
+            For example, set_by_identifier('A', 12) would set the A register to 12,
+            and set_by_identifier(0, 12) would set ram[0] to 12.
+        """
+
+        #if the identifier is an integer, use it as a RAM address
+        if isinstance(identifier, int):
+
+            #if we've been told the value is a word, set two bytes of RAM
+            if is_word:
+                self.set_ram_word(identifier, value)
+
+            #otherwise, set one, truncating if necessary
+            else:
+                self.set_ram_byte(identifier, value)
+
+        #if the identifer is a register name, set that register's value
+        elif identifier in self.REGISTERS:
+            self.__dict__[identifier] = value
+
+
+    def get_by_identifier(self, identifier, is_word=False):
+        """
+            Gets the value of a register, Flash, or RAM by its name, or address.
+
+            For example, get_by_identifier('A') returns the value in the accumulator,
+            and get_by_identifier(0x01) returns the value in ram[1].
+        """
+
+        #if the identifier is an integer, use it as a memory address
+        if isinstance(identifier, int):
+
+            #if the address is in RAM, return the appropriate value
+            if identifier in self.ram:
+                return self.ram[identifier]
+
+            #do the same for an address in flash
+            elif identifier in self.flash:
+                return self.flash[identifier]
+
+            #if the address was neither in flash nor RAM, throw an exception
+            else:
+                raise InvalidMemoryException('One of your instructions tried to read from address ' + repr(identifier) + ', which isn\'t a valid memory address.')
+
+        #if the identifier is a register name, return the register's contents
+        elif identifier in self.REGISTERS:
+            return self.__dict__[identifier]
+
+        else:
+            raise ExecutionException('The CPU tried to read from a non-existant register ' + repr(identifier) + '. This is likely an issue with the simulator; please bring this error to an instructor\'s attention.')
+
+
+    def update_NZ(self):
+        """
+            Update the N (negative) and Z (zero) flags according to the current accumulator value.
+        """
+        self.N = (self.A > 127)
+        self.Z = (self.A == 0)
 
 
     def fetch_byte(self):
@@ -243,6 +335,15 @@ class HCS08(Computer):
 
         #and return the byte
         return byte
+
+    def fetch_word(self):
+       """
+            Fetches the word at the address contained in the system's program counter, then adds two to the program counter, so it points past the end of the read word.
+       """
+
+       #fetch two bytes, then merge them into a word
+       return merge_word(self.fetch_byte(), self.fetch_byte())
+
 
 
     def get_current_opcode(self):
