@@ -56,22 +56,22 @@ class HCS08(Computer):
     # The HCS08's flags
     #
 
-    V = 0
+    V = False
     """ Signed overflow.  """
 
-    H = 0
+    H = False
     """ Half carry. """
 
-    I = 0
+    I = False
     """ Interrupt Mask """
 
-    N = 0
+    N = False
     """ Negative."""
 
-    Z = 0
+    Z = False
     """ Zero flag. """
 
-    C = 0
+    C = False
     """ Carry flag. """
 
     #
@@ -214,7 +214,8 @@ class HCS08(Computer):
         #read the operand
         operand = instruction.read_operand(address_mode, self)
 
-        print instruction, address_mode, operand
+        #and execute the instruction in question
+        instruction.execute(address_mode, self, operand)
 
 
     def get_HX(self):

@@ -347,13 +347,13 @@ class HCS08_Instruction(HCS08_Operation):
         if address_mode == 'imm':
 
             #return the next byte directly
-            return ((None, cpu.fetch_byte()))
+            return (None, cpu.fetch_byte())
 
         #16-bit immediate mode
         elif address_mode == 'imm2':
 
             #return the next two bytes
-            return ((None, cpu.fetch_word()))
+            return (None, cpu.fetch_word())
 
         #direct addressing
         elif address_mode == 'dir':
@@ -362,7 +362,7 @@ class HCS08_Instruction(HCS08_Operation):
             addr = cpu.fetch_byte()
 
             #and return the byte at the RAM address in question
-            return ((addr, cpu.get_by_identifier(addr)))
+            return (addr, cpu.get_by_identifier(addr))
 
         #extended addressing
         elif address_mode == 'ext':
@@ -371,13 +371,13 @@ class HCS08_Instruction(HCS08_Operation):
             addr = cpu.fetch_word()
 
             #return the byte at the RAM address in question
-            return ((addr, cpu.get_by_identifier(addr)))
+            return (addr, cpu.get_by_identifier(addr))
 
         #indexed  addressing
         elif address_mode == 'ix':
 
             #return the byte at the RAM address pointed to by the indexing register, HX
-            return ((cpu.get_HX(), cpu.get_by_identifier(cpu.get_HX())))
+            return (cpu.get_HX(), cpu.get_by_identifier(cpu.get_HX()))
 
         #index or stack pointer offset
         elif address_mode in ('ix1', 'ix2', 'sp1', 'sp2'):
@@ -405,7 +405,7 @@ class HCS08_Instruction(HCS08_Operation):
             addr = (base + offset) % 0xFFFF
 
             #return the byte at the computed address
-            return ((addr, cpu.get_by_identifier(addr)))
+            return (addr, cpu.get_by_identifier(addr))
 
         #if this in inherent mode, return no operand
         elif address_mode == 'inh':
@@ -833,20 +833,26 @@ class ADC(HCS08_Instruction):
             Execute the ADC instruction.
         """
 
+         #extract the operand, discarding its adddress
+        _, operand = operand
+
+        #store the initial state of the carry
+        carry = machine.C
+
         #calculate the flags
         machine.C = (machine.A + operand + machine.C) > 256;
 
         #get the carry from the 7th to 8th bit
-        carry_less = (machine.A & 0x7F) + (operand & 0x7F) + machine.C > 127;
+        carry_less = (machine.A & 0x7F) + (operand & 0x7F) + carry > 127;
 
         #compute the signed overflow
         machine.V = machine.C ^ carry_less
 
         #compute the half carry
-        machine.H = (machine.A & 0x0F) + (operand & 0x0F) + machine.C > 127;
+        machine.H = (machine.A & 0x0F) + (operand & 0x0F) + carry > 16;
 
         #finally, perform the operations
-        machine.A = (machine.A + operand + machine.C) % 256;
+        machine.A = (machine.A + operand + carry) % 256;
 
         #set the negative flag according to the sign bit, and the zero flag if the result is zero
         machine.N = machine.A > 127;
