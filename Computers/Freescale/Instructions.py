@@ -870,7 +870,7 @@ class ADD(HCS08_Instruction):
     def execute(cls, address_mode, machine, operand):
 
         #extract the operand, discarding its adddress
-        _, operand = operand[0]
+        _, operand = operand
 
         #calculate the flags
         machine.C = (machine.A + machine.C) > 256;
@@ -901,8 +901,8 @@ class AIS(HCS08_Instruction):
     @classmethod
     def execute(cls, address_mode, cpu, operand):
 
-        #extract the operand, discarding its address
-        _, operand = operand[0]
+        #extract the operand value, discarding its address
+        _, operand = operand
 
         #add the immediate to the stack
         cpu.SP += operand;
@@ -919,8 +919,8 @@ class AIX(HCS08_Instruction):
     @classmethod
     def execute(cls, address_mode, cpu, operand):
 
-        #extract the operand, discarding its address
-        _, operand = operand[0]
+        #extract the operand value, discarding its address
+        _, operand = operand
 
         #add the operand to HX
         cpu.set_HX(cpu.get_HX() + operand)
@@ -936,8 +936,8 @@ class AND(HCS08_Instruction):
     @classmethod
     def execute(cls, address_mode, cpu, operand):
 
-        #extract the operand, discarding its address
-        _, operand = operand[0]
+        #extract the operand value, discarding its address
+        _, operand = operand
 
         #perform the logical AND
         cpu.A &= operand
@@ -957,7 +957,7 @@ class ASL(HCS08_Instruction_with_AXH_Inherent):
     def execute(cls, address_mode, cpu, operand):
 
         #split the operand into its target location and value
-        target, value = operand[0]
+        target, value = operand
 
         #set the C flag if the resulting shift left will "push" out a 1
         cpu.C = value > 127
@@ -1181,6 +1181,22 @@ class BIT(HCS08_Instruction):
     mnemonics = ['bit']
     machine_codes = _machine_codes_standard(0x5)
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, discarding its address
+        _, operand = operand
+
+        #calculate the result of the accumulator and'd with the operand, but don't set the result
+        result = cpu.A and operand
+
+        #clear the V flag, as specified by the instruction set specs
+        cpu.V = False
+
+        #and set the N and Z flags
+        cpu.N = (result > 128)
+        cpu.Z = (result == 0)
+
 
 class BLE(HCS08_Simple_Branch):
     """
@@ -1189,12 +1205,26 @@ class BLE(HCS08_Simple_Branch):
     mnemonics = ['ble']
     machine_codes = { 'rel': [0x93] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if <=, signed
+        return cpu.Z or (cpu.N ^ cpu.V)
+
+
 class BLO(HCS08_Simple_Branch):
     """
         BLO (Branc if Lower)
     """
     mnemonics = ['blo']
     machine_codes = { 'rel': [0x25] }
+
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if <, unsigned
+        return cpu.C
+
 
 class BLS(HCS08_Simple_Branch):
     """
@@ -1203,12 +1233,26 @@ class BLS(HCS08_Simple_Branch):
     mnemonics = ['bls']
     machine_codes = { 'rel': [0x23] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if <=, unsigned
+        return cpu.C or cpu.Z
+
+
 class BLT(HCS08_Simple_Branch):
     """
         BLT (Branch if Less Than)
     """
     mnemonics = ['blt']
     machine_codes = { 'rel': [0x91] }
+
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if <, signed
+        return cpu.N ^ cpu.Z
+
 
 class BMC(HCS08_Simple_Branch):
     """
@@ -1217,12 +1261,24 @@ class BMC(HCS08_Simple_Branch):
     mnemonics = ['bmc']
     machine_codes = { 'rel': [0x2C] }
 
+    @classmethod
+    def predicate(cls, cpu):
+        return not cpu.I
+
+
 class BMI(HCS08_Simple_Branch):
     """
         BMI (Branch if Minus)
     """
     mnemonics = ['bmi']
     machine_codes = { 'rel': [0x2B] }
+
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if N=1
+        return cpu.N
+
 
 class BMS(HCS08_Simple_Branch):
     """
@@ -1231,12 +1287,22 @@ class BMS(HCS08_Simple_Branch):
     mnemonics = ['bms']
     machine_codes = { 'rel': [0x2D] }
 
+    @classmethod
+    def predicate(cls, cpu):
+        return cpu.I
+
+
 class BNE(HCS08_Simple_Branch):
     """
         BNE (Branch if Not Equal)
     """
     mnemonics = ['bne']
     machine_codes = { 'rel': [0x26] }
+
+    @classmethod
+    def predicate(cls, cpu):
+        return cpu.Z
+
 
 class BPL(HCS08_Simple_Branch):
     """
@@ -1245,12 +1311,22 @@ class BPL(HCS08_Simple_Branch):
     mnemonics = ['bpl']
     machine_codes = { 'rel': [0x2A] }
 
+    @classmethod
+    def predicate(cls, cpu):
+
+        #branch if not negative
+        return not self.N
+
 class BRA(HCS08_Simple_Branch):
     """
         BRA (Branch Always)
     """
     mnemonics = ['bra']
     machine_codes = { 'rel': [0x20] }
+
+    @classmethod
+    def predicate(cls, cpu):
+        return True
 
 class BRCLR(HCS08_Bit_Branch):
     """
@@ -1260,6 +1336,24 @@ class BRCLR(HCS08_Bit_Branch):
     mnemonics = ['brclr']
     machine_codes = _machine_codes_bit_operation(prefix=0, is_clear=True)
 
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, discarding its address
+        _, operand = operand[0]
+
+        #and extract the branch target
+        _, offset =  operand[1]
+
+        #get a bitmask, which will allow us to test just the relevant bit
+        mask = HCS08_Bit_Operation.get_mask_from_address_mode(address_mode)
+
+        #if the given bit is clear (the operand AND's with the mask to be zero), branch
+        if not (mask & operand):
+            cpu.PC += offset
+
+
 class BRN(HCS08_Simple_Branch):
     """
         BRN (Branch Never)
@@ -1267,6 +1361,10 @@ class BRN(HCS08_Simple_Branch):
     """
     mnemonics = ['brn']
     machine_codes = { 'rel': [0x21] }
+
+    @classmethod
+    def predicate(cls, cpu):
+        return False
 
 
 class BRSET(HCS08_Bit_Branch):
@@ -1277,12 +1375,41 @@ class BRSET(HCS08_Bit_Branch):
     mnemonics = ['brset']
     machine_codes = _machine_codes_bit_operation(prefix=0, is_clear=False)
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, discarding its address
+        _, operand = operand[0]
+
+        #and extract the branch target
+        _, offset =  operand[1]
+
+        #get a bitmask, which will allow us to test just the relevant bit
+        mask = HCS08_Bit_Operation.get_mask_from_address_mode(address_mode)
+
+        #if the given bit is set (the operand AND's with the mask to be one), branch
+        if mask & operand:
+            cpu.PC += offset
+
+
 class BSET(HCS08_Bit_Operation):
     """
         BSET (Set Bit)
     """
     mnemonics = ['bset']
     machine_codes = _machine_codes_bit_operation(prefix=1, is_clear=False)
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #split the operand into its target location and value
+        target, value = operand[0]
+
+        #get a bit mask from the address mode
+        mask = cls.get_mask_from_address_mode(address_mode)
+
+        #and use it to set the appropriate bit
+        cpu.set_by_identifier(target, value mask)
 
 
 class BSR(HCS08_Simple_Branch):
@@ -1293,7 +1420,18 @@ class BSR(HCS08_Simple_Branch):
     mnemonics = ['bsr']
     machine_codes = { 'rel': [0xAD] }
 
-    #TODO: override execute
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the offset value, which indicates the subroutine's address
+        _, offset = operand
+
+        #push the return address onto the stack
+        cpu.push_word(cpu.PC)
+
+        #and branch to the subroutine
+        cpu.PC += offset
+
 
 
 class CBEQ(HCS08_Constructed_Branch):
@@ -1321,12 +1459,59 @@ class CBEQ(HCS08_Constructed_Branch):
         #return the (possibly corrected) machine code
         return base
 
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+        """
+            Gets the operands for a CBEQ instruction.
+        """
+
+        #if this is one of the special case inherents, handle the opcode read here
+        if address_mode in ('inha', 'inhx'):
+
+            #each of the inherent modes above have two operands: an immediate, followed by a relative offset
+            return ((None, cpu.fetch_byte()), (None, cpu.fetch_byte())
+
+        #otherwise, delegate to the parent class
+        else:
+            return super(CBEQ, cls).read_operand(address_mode, cpu)
+
+
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value
+        _, operand = operand[0]
+
+        #and extract the branch offset
+        _, offset = operand[1]
+
+        #if we're in the special CBEQX mode, compare X and the operand
+        if address_mode = 'inhx':
+            predicate = (cpu.X == operand)
+
+        #otherwise, compare the operand to the accumulator
+        else:
+            predicate = (cpu.A == operand)
+
+        #if the branch condition was met, branch
+        if predicate:
+            self.PC += offset
+
+
+
 class CLC(HCS08_Instruction):
     """
         Clear Carry Bit
     """
     mnemonics = ['clc']
     machine_codes = { 'inh': [0x98] }
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #clear the carry
+        cpu.C = False
 
 
 class CLI(HCS08_Instruction):
@@ -1336,6 +1521,12 @@ class CLI(HCS08_Instruction):
     mnemonics = ['cli']
     machine_codes = { 'inh': [0x9A] }
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #clear the interrupt mask
+        cpu.I = False
+
 
 class CLR(HCS08_Instruction_with_AXH_Inherent):
     """
@@ -1344,6 +1535,21 @@ class CLR(HCS08_Instruction_with_AXH_Inherent):
     mnemonics = ['clr', 'clra', 'clrx', 'clrh']
     machine_codes = _machine_codes_axh_inherent(0xF, h_suffix=0xC)
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand target, ignoring its value
+        target, _ = operand
+
+        #clear the target address or register
+        self.set_by_identifier(target, 0)
+
+        #set the flags as specified in the instruction set spec
+        self.V = 0
+        self.N = 0
+        self.Z = 1
+
+
 class CMP(HCS08_Instruction):
     """
         Compare accumulator with memory
@@ -1351,12 +1557,43 @@ class CMP(HCS08_Instruction):
     mnemonics = ['cmp']
     machine_codes = _machine_codes_standard(0x1)
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, discarding its address
+        _, operand = operand
+
+        #perform a theoretical subtraction, which we will use to determine the flag values
+        result = cpu.A - operand
+
+        #get quick references to the signs of the accumulator, the operand, and the result
+        a_sign = cpu.A > 127
+        result_sign = result > 127
+        operand_sign = operand > 127
+
+        #flag values, taken directly from the instruction set spec:
+        self.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
+        self.N = result_sign
+        self.Z = (result == 0)
+        self.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
+
+
 class COM(HCS08_Instruction_with_AXH_Inherent):
     """
         One's compliment a given register or memory address.
     """
     mnemonics = ['com', 'coma', 'comx']
     machine_codes = _machine_codes_axh_inherent(0x03)
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, as well as the target register
+        target, operand = operand
+
+        #perform the one's compliment, and store the result
+        self.set_by_identifier(target, ~operand)
+
 
 class CPHX(HCS08_Instruction):
     """
@@ -1372,6 +1609,59 @@ class CPHX(HCS08_Instruction):
                 'sp1':  [0x9E, 0xF3]
             }
 
+    @classmethod
+    def read_operand(cls, address_mode, cpu):
+
+        #if we're using a two-byte immediate, the standard operand retrieval works properly; use it
+        if address_mode == 'imm2':
+            return super(CPHX, cls).read_operand(address_mode, cpu)
+
+        #handle direct/extended addressing
+        elif address_mode in ('dir', 'ext'):
+
+            #read the byte address
+            addr = cpu.fetch_byte() if address_mode == 'dir' else cpu.fetch_word()
+
+            #and retrieve the _word_ at that address
+            value = self.get_by_identifier(addr, is_word=True)
+
+            #return the operand
+            return addr, value
+
+        elif address_mode == 'sp1':
+
+            #fetch the single byte stack offset
+            offset = cpu.fetch_byte()
+
+            #and use it to compute the resultant address
+            addr = cpu.SP + offset
+
+            #get the _word_ at that address
+            value = self.get_by_identifier(addr, is_word=True)
+
+            #return the operand
+            return addr, value
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, discarding its address
+        _, operand = operand
+
+        #perform a theoretical subtraction, which we will use to determine the flag values
+        result = cpu.get_HX() - operand
+
+        #get quick references to the signs of the accumulator, the operand, and the result
+        HX_sign = cpu.get_HX() >  0x7FFF
+        result_sign = result > 0x7FFF
+        operand_sign = operand > 0x7FFF
+
+        #flag values, taken directly from the instruction set spec:
+        self.V = (hx_sign and not result_sign and not operand_sign) or (not hx_sign and operand_sign and result_sign)
+        self.N = result_sign
+        self.Z = (result == 0)
+        self.C = (operand_sign and not hx_sign) or (operand_sign and result_sign) or (result_sign and not hx_sign)
+
 
 class CPX(HCS08_Instruction):
     """
@@ -1379,6 +1669,27 @@ class CPX(HCS08_Instruction):
     """
     mnemonics = ['cpx']
     machine_codes = _machine_codes_standard(0x3)
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, discarding its address
+        _, operand = operand
+
+        #perform a theoretical subtraction, which we will use to determine the flag values
+        result = cpu.X - operand
+
+        #get quick references to the signs of the accumulator, the operand, and the result
+        x_sign = cpu.X > 127
+        result_sign = result > 127
+        operand_sign = operand > 127
+
+        #flag values, taken directly from the instruction set spec:
+        self.V = (x_sign and not result_sign and not operand_sign) or (not x_sign and operand_sign and result_sign)
+        self.N = result_sign
+        self.Z = (result == 0)
+        self.C = (operand_sign and not x_sign) or (operand_sign and result_sign) or (result_sign and not x_sign)
+
 
 
 class DAA(HCS08_Instruction):
@@ -1389,12 +1700,53 @@ class DAA(HCS08_Instruction):
     machine_codes = { 'inh': [0x72] }
 
 
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #split the accumulator into nibbles:
+        msn = cpu.A >> 4
+        lsn = cpu.A & 0x0F;
+
+        #perform the operation denoted on table A-2 of the instruction set spec
+        #(transcribed to match the table exactly)
+        if      cpu.C == 0  and msn <= 8    and cpu.H == 0  and lsn >= 0xA  :   cpu.A += 0x06
+        elif    cpu.C == 0  and msn <= 9    and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x06
+        elif    cpu.C == 0  and msn >= 0xA  and cpu.H == 0  and lsn <= 9    :   cpu.A += 0x60;  cpu.C = 1
+        elif    cpu.C == 0  and msn >= 9    and cpu.H == 0  and lsn >= 0xA  :   cpu.A += 0x66;  cpu.C = 1
+        elif    cpu.C == 0  and msn >= 0xA  and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x66;  cpu.C = 1
+        elif    cpu.C == 1  and msn <= 2    and cpu.H == 0  and lsn <= 9    :   cpu.A += 0x60
+        elif    cpu.C == 1  and msn <= 2    and cpu.H == 0  and lsn >= 0xA  :   cpu.A += 0x66
+        elif    cpu.C == 1  and msn <= 3    and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x66
+
+        #set the flags:
+        self.V = None #undefined by instruction set spec
+        self.N = cpu.A > 127
+        self.Z = cpu.A == 0
+
+
 class DBNZ(HCS08_Constructed_Branch):
     """
         Decrement, then Branch if target is Zero
     """
     mnemonics = ['dbnz', 'dbnza', 'dbnzx']
     machine_codes = _machine_codes_axh_inherent(0xB)
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #extract the operand value, and location
+        target, operand = operand[0]
+
+        #extract the branch offset
+        _, offset = operand[1]
+
+        #decrement the operand
+        cpu.set_by_identifier(target, operand - 1)
+
+        #and branch if the post-decrement result is not zero
+        if operand == 1:
+            cpu.PC += offset
+
 
 class DEC(HCS08_Instruction_with_AXH_Inherent):
     """

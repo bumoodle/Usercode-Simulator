@@ -297,11 +297,25 @@ class HCS08(Computer):
 
             #if the address is in RAM, return the appropriate value
             if identifier in self.ram:
-                return self.ram[identifier]
+
+                #if we've been asked to retrieve a word, do so
+                if is_word:
+                    return merge_word(self.ram[identifier], self.ram[identifier + 1])
+
+                #otherwise, return a byte
+                else:
+                    return self.ram[identifier]
 
             #do the same for an address in flash
             elif identifier in self.flash:
-                return self.flash[identifier]
+
+                #if we've been asked to retrieve a word, do so
+                if is_word:
+                    return merge_word(self.flash[identifier], self.flash[identifier + 1])
+
+                #otherwise, return a byte
+                else:
+                    return self.flash[identifier]
 
             #if the address was neither in flash nor RAM, throw an exception
             else:
@@ -345,6 +359,51 @@ class HCS08(Computer):
        #fetch two bytes, then merge them into a word
        return merge_word(self.fetch_byte(), self.fetch_byte())
 
+    def push_byte(self, byte):
+        """
+            Pushes a given byte onto the stack.
+        """
+
+        #set the value pointed to by the stack pointer
+        self.set_by_identifier(self.SP, byte)
+
+        #and increment the SP
+        self.SP += 1
+
+    def push_word(self, word):
+        """
+            Pushes a given word onto the stack.
+        """
+
+        #split the word into two bytes
+        msb, lsb = split_word(word)
+
+        #then, push those bytes- pushing the LSB first, so the bytes remain in big endian order
+        self.push_byte(lsb)
+        self.push_byte(msb)
+
+    def pull_byte(self):
+        """
+            Pulls a byte from the stack, and returns it.
+        """
+
+        #decrease the stack pointer by one
+        self.SP -= 1
+
+        #and return the value it points to
+        return self.get_by_identifier(self.SP)
+
+    def pull_word(self):
+        """
+            Pulls a word from the stack, and returns it.
+        """
+
+        #pull two bytes from the stack
+        msb = self.pull_byte()
+        lsb = self.pull_byte()
+
+        #and merge them into a single word
+        return merge_word(msb, lsb)
 
 
     def get_current_opcode(self):
@@ -388,18 +447,6 @@ class HCS08(Computer):
         #if we didn't find a class, raise an InvalidOpcodeException
         raise InvalidOpcodeException('The microcontroller attempted to execute the opcode ' + repr(opcode) + ' which does not correspond to a valid instruction. Did the execution "flow" run past the end of your program?')
 
-
-
-def get_operation_by_mnemonic(mnemonic):
-
-    #for each defined operation
-    for _, instruction in inspect.getmembers(Instructions, lambda x : inspect.isclass(x)):
-
-        #if the given instruction is a HCS08 operation represented by the given mnemonic
-        if issubclass(instruction, Instructions.HCS08_Operation) and mnemonic.lower() in instruction.mnemonics:
-
-            #return the class
-            return instruction
 
 
 class MC9S08QG8(HCS08):

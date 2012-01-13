@@ -225,9 +225,14 @@ class Assembler(object):
         #third pass: resolve all of the symbols into concrete numeric values, so what's left is true machine code
         self.resolve_symbols(self.flash)
 
-        ##DEBUG
+//get an array identifying each oassociative array, which indicates the questions which should be rendered
+         <t_ý>c<t_ý>bforeach($<t_ý>c<t_ý>b<t_$slots##DE = $usage->get_slots();
 
-        #print "SYMBOLS:"
+        #print "SYMBOLS:"   foreach($slots as $slot =><t_ü> $question)
+                               {
+
+                               }
+
 
         #for i in self.symbols:
         #    print i + '\t\t', hex(self.symbols[i])
