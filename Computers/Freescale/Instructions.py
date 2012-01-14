@@ -7,7 +7,7 @@
 """
 
 from Computers.Exceptions import UserCodeException, ExecutionException
-from utils import parse_number, parse_operand, split_word, is_numeric, fit_to_size, merge_word, sign_extend
+from utils import parse_number, parse_operand, split_word, is_numeric, fit_to_size, sign_extend, merge_word
 
 
 def _machine_codes_standard(suffix, include_imm=True):
@@ -130,6 +130,11 @@ class InvalidAddressingException(UserCodeException):
         Specified when a given instruction is supplied with an invalid addressing mode.
     """
     pass
+
+class InvalidBranchException(UserCodeException):
+    """
+        Thrown during parse-time, when a branch cannot reach the provided destination.
+    """
 
 class ExecutionAddressingException(ExecutionException):
     """
@@ -607,7 +612,7 @@ class HCS08_Bit_Operation(HCS08_Instruction):
 
 
     @staticmethod
-    def get_mask_from_address_mode(cls, address_mode):
+    def get_mask_from_address_mode(address_mode):
         """
             Returns a mask which only has the given bit in question high, where bit is determined by the addressing mode.
             This is primarily used to calculate the result of bit operations.
@@ -884,25 +889,25 @@ class ADD(HCS08_Instruction):
     machine_codes = _machine_codes_standard(0xB)
 
     @classmethod
-    def execute(cls, address_mode, machine, operand):
+    def execute(cls, address_mode, cpu, operand):
 
         #extract the operand, discarding its adddress
         _, operand = operand
 
         #calculate the flags
-        machine.C = (machine.A + machine.C) > 256;
+        cpu.C = (cpu.A + cpu.C) > 256;
 
         #get the carry from the 7th to 8th bit
-        carry_less = (machine.A & 0x7F) + (operand & 0x7F) > 127;
+        carry_less = (cpu.A & 0x7F) + (operand & 0x7F) > 127;
 
         #compute the signed overflow
-        machine.V = machine.C ^ carry_less
+        cpu.V = cpu.C ^ carry_less
 
         #compute the half carry
-        machine.H = (machine.A & 0x0F) + (operand & 0x0F)  > 127;
+        cpu.H = (cpu.A & 0x0F) + (operand & 0x0F)  > 127;
 
         #finally, perform the operations
-        machine.A = (machine.A + operand) % 256;
+        cpu.A = (cpu.A + operand) % 256;
 
         #set the negative flag according to the sign bit, and the zero flag if the result is zero
         cpu.update_NZ()
@@ -980,14 +985,14 @@ class ASL(HCS08_Instruction_with_AXH_Inherent):
         cpu.C = value > 127
 
         #calculate the result
-        result = (operand << 1) & 0xFF
+        result = (value << 1) & 0xFF
 
         #and store it in the appropriate location
         cpu.set_by_identifier(target, result)
 
         #set the N and Z, and V flags
-        cpu.updateNZ()
-        cup.V = cpu.C ^ cpu.N
+        cpu.update_NZ()
+        cpu.V = cpu.C ^ cpu.N
 
 
 class ASR(HCS08_Instruction_with_AXH_Inherent):
@@ -1014,8 +1019,8 @@ class ASR(HCS08_Instruction_with_AXH_Inherent):
         cpu.set_by_identifier(target, result)
 
         #set the N and Z, and V flags
-        cpu.updateNZ()
-        cup.V = cpu.C ^ cpu.N
+        cpu.update_NZ()
+        cpu.V = cpu.C ^ cpu.N
 
 
 
@@ -1131,7 +1136,7 @@ class BHCC(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if the half carry is clear
-        return not self.H
+        return not cpu.H
 
 class BHCS(HCS08_Simple_Branch):
     """
@@ -1144,7 +1149,7 @@ class BHCS(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if the half carry is set
-        return self.H
+        return cpu.H
 
 
 class BHI(HCS08_Simple_Branch):
@@ -1158,7 +1163,7 @@ class BHI(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if >, unsigned
-        return not (self.C or self.Z)
+        return not (cpu.C or cpu.Z)
 
 
 class BHS(HCS08_Simple_Branch):
@@ -1172,7 +1177,7 @@ class BHS(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if >=, unsigned
-        return not self.C
+        return not cpu.C
 
 class BIH(HCS08_Simple_Branch):
     """
@@ -1341,7 +1346,7 @@ class BPL(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if not negative
-        return not self.N
+        return not cpu.N
 
 class BRA(HCS08_Simple_Branch):
     """
@@ -1405,7 +1410,7 @@ class BRSET(HCS08_Bit_Branch):
     def execute(cls, address_mode, cpu, operand):
 
         #extract the operand value, discarding its address
-        _, operand = operand[0]
+        _, value = operand[0]
 
         #and extract the branch target
         _, offset =  operand[1]
@@ -1414,7 +1419,7 @@ class BRSET(HCS08_Bit_Branch):
         mask = HCS08_Bit_Operation.get_mask_from_address_mode(address_mode)
 
         #if the given bit is set (the operand AND's with the mask to be one), branch
-        if mask & operand:
+        if mask & value:
             cpu.PC += offset
 
 
@@ -1435,7 +1440,7 @@ class BSET(HCS08_Bit_Operation):
         mask = cls.get_mask_from_address_mode(address_mode)
 
         #and use it to set the appropriate bit
-        cpu.set_by_identifier(target, value mask)
+        cpu.set_by_identifier(target, value | mask)
 
 
 class BSR(HCS08_Simple_Branch):
@@ -1495,7 +1500,7 @@ class CBEQ(HCS08_Constructed_Branch):
         if address_mode in ('inha', 'inhx'):
 
             #each of the inherent modes above have two operands: an immediate, followed by a relative offset
-            return ((None, cpu.fetch_byte()), (None, cpu.fetch_byte())
+            return (None, cpu.fetch_byte()), (None, cpu.fetch_byte())
 
         #otherwise, delegate to the parent class
         else:
@@ -1513,7 +1518,7 @@ class CBEQ(HCS08_Constructed_Branch):
         _, offset = operand[1]
 
         #if we're in the special CBEQX mode, compare X and the operand
-        if address_mode = 'inhx':
+        if address_mode == 'inhx':
             predicate = (cpu.X == operand)
 
         #otherwise, compare the operand to the accumulator
@@ -1522,7 +1527,7 @@ class CBEQ(HCS08_Constructed_Branch):
 
         #if the branch condition was met, branch
         if predicate:
-            self.PC += offset
+            cpu.PC += offset
 
 
 
@@ -1568,12 +1573,12 @@ class CLR(HCS08_Instruction_with_AXH_Inherent):
         target, _ = operand
 
         #clear the target address or register
-        self.set_by_identifier(target, 0)
+        cpu.set_by_identifier(target, 0)
 
         #set the flags as specified in the instruction set spec
-        self.V = 0
-        self.N = 0
-        self.Z = 1
+        cpu.V = 0
+        cpu.N = 0
+        cpu.Z = 1
 
 
 class CMP(HCS08_Instruction):
@@ -1598,10 +1603,10 @@ class CMP(HCS08_Instruction):
         operand_sign = operand > 127
 
         #flag values, taken directly from the instruction set spec:
-        self.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
-        self.N = result_sign
-        self.Z = (result == 0)
-        self.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
+        cpu.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
+        cpu.N = result_sign
+        cpu.Z = (result == 0)
+        cpu.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
 
 
 class COM(HCS08_Instruction_with_AXH_Inherent):
@@ -1618,7 +1623,7 @@ class COM(HCS08_Instruction_with_AXH_Inherent):
         target, operand = operand
 
         #perform the one's compliment, and store the result
-        self.set_by_identifier(target, ~operand)
+        cpu.set_by_identifier(target, ~operand)
 
 
 class CPHX(HCS08_Instruction):
@@ -1649,7 +1654,7 @@ class CPHX(HCS08_Instruction):
 #            addr = cpu.fetch_byte() if address_mode == 'dir' else cpu.fetch_word()
 #
 #            #and retrieve the _word_ at that address
-#            value = self.get_by_identifier(addr, is_word=True)
+#            value = cpu.get_by_identifier(addr, is_word=True)
 #
 #            #return the operand
 #            return addr, value
@@ -1663,7 +1668,7 @@ class CPHX(HCS08_Instruction):
 #            addr = cpu.SP + offset
 #
 #            #get the _word_ at that address
-#            value = self.get_by_identifier(addr, is_word=True)
+#            value = cpu.get_by_identifier(addr, is_word=True)
 #
 #            #return the operand
 #            return addr, value
@@ -1683,15 +1688,15 @@ class CPHX(HCS08_Instruction):
         result = (cpu.get_HX() - operand) % 0xFFFF
 
         #get quick references to the signs of the accumulator, the operand, and the result
-        HX_sign = cpu.get_HX() >  0x7FFF
+        hx_sign = cpu.get_HX() >  0x7FFF
         result_sign = result > 0x7FFF
         operand_sign = operand > 0x7FFF
 
         #flag values, taken directly from the instruction set spec:
-        self.V = (hx_sign and not result_sign and not operand_sign) or (not hx_sign and operand_sign and result_sign)
-        self.N = result_sign
-        self.Z = (result == 0)
-        self.C = (operand_sign and not hx_sign) or (operand_sign and result_sign) or (result_sign and not hx_sign)
+        cpu.V = (hx_sign and not result_sign and not operand_sign) or (not hx_sign and operand_sign and result_sign)
+        cpu.N = result_sign
+        cpu.Z = (result == 0)
+        cpu.C = (operand_sign and not hx_sign) or (operand_sign and result_sign) or (result_sign and not hx_sign)
 
 
 class CPX(HCS08_Instruction):
@@ -1716,10 +1721,10 @@ class CPX(HCS08_Instruction):
         operand_sign = operand > 127
 
         #flag values, taken directly from the instruction set spec:
-        self.V = (x_sign and not result_sign and not operand_sign) or (not x_sign and operand_sign and result_sign)
-        self.N = result_sign
-        self.Z = (result == 0)
-        self.C = (operand_sign and not x_sign) or (operand_sign and result_sign) or (result_sign and not x_sign)
+        cpu.V = (x_sign and not result_sign and not operand_sign) or (not x_sign and operand_sign and result_sign)
+        cpu.N = result_sign
+        cpu.Z = (result == 0)
+        cpu.C = (operand_sign and not x_sign) or (operand_sign and result_sign) or (result_sign and not x_sign)
 
 
 
@@ -1750,9 +1755,9 @@ class DAA(HCS08_Instruction):
         elif    cpu.C == 1  and msn <= 3    and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x66
 
         #set the flags:
-        self.V = None #undefined by instruction set spec
-        self.N = cpu.A > 127
-        self.Z = cpu.A == 0
+        cpu.V = None #undefined by instruction set spec
+        cpu.N = cpu.A > 127
+        cpu.Z = cpu.A == 0
 
 
 class DBNZ(HCS08_Constructed_Branch):
@@ -1814,7 +1819,7 @@ class DIV(HCS08_Instruction):
         _, operand = operand
 
         #get H:A, which is used as the number to be divided
-        ha = merge_words(cpu.H, cpu.A)
+        ha = merge_word(cpu.H, cpu.A)
 
         #perform division, and store the result
         cpu.A = ha // cpu.X
@@ -1994,7 +1999,7 @@ class LSR(HCS08_Instruction_with_AXH_Inherent):
     mnemonics = ['lsr', 'lsra', 'lsrx']
     machine_codes = _machine_codes_axh_inherent(0x4)
 
-@classmethod
+    @classmethod
     def execute(cls, address_mode, cpu, operand):
 
         #split the operand into its target location and value
@@ -2010,8 +2015,8 @@ class LSR(HCS08_Instruction_with_AXH_Inherent):
         cpu.set_by_identifier(target, result)
 
         #set the N and Z, and V flags
-        cpu.updateNZ()
-        cup.V = cpu.C ^ cpu.N
+        cpu.update_NZ()
+        cpu.V = cpu.C ^ cpu.N
 
 
 class MOV(HCS08_Instruction):
@@ -2059,9 +2064,9 @@ class MOV(HCS08_Instruction):
         cpu.set_by_identifier(target, operand)
 
         #and set the flags
-        self.V = 0
-        self.N = (operand > 127)
-        self.Z = (operand == 0)
+        cpu.V = 0
+        cpu.N = (operand > 127)
+        cpu.Z = (operand == 0)
 
 
 
@@ -2076,11 +2081,11 @@ class MUL(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #perform the multiplication
-        self.X, self.A = split_word(self.X * self.A)
+        cpu.X, cpu.A = split_word(cpu.X * cpu.A)
 
         #and set the relevant flags
-        self.H = 0
-        self.C = 0
+        cpu.H = 0
+        cpu.C = 0
 
 
 
@@ -2099,13 +2104,13 @@ class NEG(HCS08_Instruction_with_AXH_Inherent):
         target, operand = operand
 
         #perform the two's compliment
-        self.set_by_identifier(target, (0 - operand) % 256)
+        cpu.set_by_identifier(target, (0 - operand) % 256)
 
         #and set the relevant flags
-        self.V = (operand == 0x80) #taking the two's compliment of 128 causes unsigned overflow
-        self.N = (operand < 128) #the value will be negative if it was positive before
-        self.Z = (operand == 0)
-        self.C = (operand != 0)
+        cpu.V = (operand == 0x80) #taking the two's compliment of 128 causes unsigned overflow
+        cpu.N = (operand < 128) #the value will be negative if it was positive before
+        cpu.Z = (operand == 0)
+        cpu.C = (operand != 0)
 
 
 class NOP(HCS08_Instruction):
@@ -2256,15 +2261,15 @@ class ROR(HCS08_Instruction_with_AXH_Inherent):
         result = ((operand >> 1) % 256) | (cpu.C << 7)
 
         #store it to the appropriate register
-        self.set_by_value(target, result)
+        cpu.set_by_value(target, result)
 
         #and set the new carry value
-        self.C = (operand & 0x01 == 1)
+        cpu.C = (operand & 0x01 == 1)
 
         #set the other flags
-        self.N = (result > 127)
-        self.V = self.N ^ self.C
-        self.Z = (result == 0)
+        cpu.N = (result > 127)
+        cpu.V = cpu.N ^ cpu.C
+        cpu.Z = (result == 0)
 
 
 class RSP(HCS08_Instruction):
@@ -2340,8 +2345,8 @@ class SBC(HCS08_Instruction):
         operand_sign = operand > 127
 
         #flag values, taken directly from the instruction set spec:
-        self.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
-        self.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
+        cpu.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
+        cpu.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
 
         #finally, store the result
         cpu.A = result
@@ -2427,13 +2432,22 @@ class STHX(HCS08_Instruction):
 
 
 
-class STOP(HCS08_Not_Implemented):
+class STOP(HCS08_Instruction):
     """
         Stops processing and enables interrupts.
-        Not implemented due to scope of simulator.
     """
 
     mnemonics = ['stop']
+    machine_codes = {'inh': 0x8E }
+
+    @classmethod
+    def execute(cls, address_mode, cpu, operand):
+
+        #enable interrupts
+        cpu.I = False
+
+        #halt the CPU
+        cpu.halt()
 
 
 class STX(HCS08_Instruction):
@@ -2447,16 +2461,16 @@ class STX(HCS08_Instruction):
     @classmethod
     def execute(cls, address_mode, cpu, operand):
 
-    #extract the operand location, discarding its value
-    target, _ = operand
+        #extract the operand location, discarding its value
+        target, _ = operand
 
-    #set the target's value equal to the value in X
-    cpu.set_by_identifier(target, cpu.X)
+        #set the target's value equal to the value in X
+        cpu.set_by_identifier(target, cpu.X)
 
-    #set the flags
-    cpu.V = 0
-    cpu.N = (cpu.X > 128)
-    cpu.Z = (cpu.X == 0)
+        #set the flags
+        cpu.V = 0
+        cpu.N = (cpu.X > 128)
+        cpu.Z = (cpu.X == 0)
 
 
 
@@ -2482,8 +2496,8 @@ class SUB(HCS08_Instruction):
         operand_sign = operand > 127
 
         #flag values, taken directly from the instruction set spec:
-        self.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
-        self.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
+        cpu.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
+        cpu.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
 
         #finally, store the result
         cpu.A = result
@@ -2565,8 +2579,8 @@ class TST(HCS08_Instruction_with_AXH_Inherent):
         operand_sign = operand > 127
 
         #flag values, taken directly from the instruction set spec:
-        self.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
-        self.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
+        cpu.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
+        cpu.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
 
 
 class TSX(HCS08_Instruction):
@@ -2580,7 +2594,7 @@ class TSX(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #transfer the SP to HX, adding one
-        self.HX = (self.SP + 1) % 0xFFFF
+        cpu.HX = (cpu.SP + 1) % 0xFFFF
 
 
 class TXA(HCS08_Instruction):
@@ -2594,7 +2608,7 @@ class TXA(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #tranfer X to A
-        self.A = self.X
+        cpu.A = cpu.X
 
 
 
@@ -2610,7 +2624,7 @@ class TXS(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #copy the value of the index register to the stack pointer
-        self.SP = (self.HX - 1) % 0xFFFF
+        cpu.SP = (cpu.HX - 1) % 0xFFFF
 
 
 class WAIT(HCS08_Not_Implemented):

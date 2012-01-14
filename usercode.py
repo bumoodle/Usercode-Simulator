@@ -37,9 +37,16 @@ def main():
     if args.system in ('hcs08', 'MC9S08QG8'):
         system = MC9S08QG8(code);
 
+    print system
+
     system.step()
+    print system
+
     system.step()
+    print system
+
     system.step()
+    print system
 
 
 

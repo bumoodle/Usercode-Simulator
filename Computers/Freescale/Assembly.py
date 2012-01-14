@@ -209,7 +209,22 @@ class Assembler(object):
         self.flash = flash_memory
 
 
-    def process_code(self, code):
+    def process_code(self, code, terminate_with_stop=False, blacklist=None, whitelist=None, required=None):
+        """
+        """
+
+        #if black/whitelists were not provided, initialize them to empty lists
+        blacklist = () if blacklist is None else blacklist
+        whitelist = () if whitelist is None else whitelist
+
+        #if required was provided, build a dictionary which maps each required element to a boolean value indicating
+        #whether it has been used
+        if required is not None:
+            required = {i : False for in required}
+
+        #otherwise, set required to an empty dictionary
+        else:
+            required = {}
 
         #if we were passed the code listing as a string, split it into lines
         if isinstance(code, str):
@@ -225,28 +240,18 @@ class Assembler(object):
         #third pass: resolve all of the symbols into concrete numeric values, so what's left is true machine code
         self.resolve_symbols(self.flash)
 
-//get an array identifying each oassociative array, which indicates the questions which should be rendered
-         <t_ý>c<t_ý>bforeach($<t_ý>c<t_ý>b<t_$slots##DE = $usage->get_slots();
-
-        #print "SYMBOLS:"   foreach($slots as $slot =><t_ü> $question)
-                               {
-
-                               }
+        #if requested, add a STOP operation, to prevent execution from "flowing" past the end of the program
+        if terminate_with_stop:
+            self.add_stop()
 
 
-        #for i in self.symbols:
-        #    print i + '\t\t', hex(self.symbols[i])
+    def add_stop(self):
+        """
+            Adds a STOP operand at the current location, which indicates to the CPU that execution should be halted.
+        """
 
-        #print "\n\nFLASH:"
-
-        #for i in self.flash:
-        #    if self.flash[i] != 0:
-        #        try:
-        #            print hex(i) + '\t\t', hex(self.flash[i])
-        #        except TypeError:
-        #            print self.flash[i]
-
-
+        self.flash[self.location] = Instructions.STOP.machine_code['inh']
+        self.location += 1
 
 
     def resolve_symbols(self, program):

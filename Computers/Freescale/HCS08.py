@@ -84,6 +84,17 @@ class HCS08(Computer):
     """ The device's read-only flash memory."""
 
     #
+    # Internal status registers, which inidicate the CPU's progress.
+    #
+
+    _halted = False
+    """ True iff the CPU has been halted; indicates that the CPU should stop executing the current program, if one is running. """
+
+    Cycles = 0
+    """ The amount of CPU cycles since the last device reset. """
+
+
+    #
     # Shortcuts to registers, and relevant RAM addresses.
     #
 
@@ -93,6 +104,7 @@ class HCS08(Computer):
     FLAGS = ('V', 'H', 'I', 'N', 'Z', 'C')
     """ Convenience 'contsant', which contains the names of each of the device's flags. Can be used with self.__dict__ to iterate over each of the flags."""
 
+    EXPOSED_RAM = tuple(range(0x80, 0x85)) #DEBUG ONLY: make larger later
 
     def __init__(self, code=None):
         """
@@ -196,9 +208,8 @@ class HCS08(Computer):
         #set the program counter to the start of flash
         self.PC = min(self.flash)
 
-        #set the stack pointer to the end of flash
-        self.SP = max(self.flash)
-
+        #set the stack pointer to the end of RAM
+        self.SP = max(self.ram)
 
     def step(self):
         """
@@ -216,6 +227,45 @@ class HCS08(Computer):
 
         #and execute the instruction in question
         instruction.execute(address_mode, self, operand)
+
+
+    def halt(self):
+        """
+            Stops the CPU mid-execution by setting the halted flag to true.
+            The CPU can be restarted by calling resume() or reset().
+        """
+        self._halted = True
+
+    def resume(self):
+        """
+            Resumes opreation of the CPU by setting the halted flag to false.
+        """
+        self._halted = False
+
+
+    def single_step(self):
+        """
+            Alias for step().
+        """
+        self.step()
+
+
+    def run(self):
+        """
+            Runs until a STOP instruction (or undefined memory) is encountered.
+        """
+        self.run(lambda x : False)
+
+
+    def run_until(self, condition):
+        """
+            Runs until a given condition evaluates to false. Condition is a function or lambda which accepts the CPU as its argument.
+        """
+
+        #while the stop condition is _not_ true, and the CPU is not halted, run
+        while not condition(self) and not self._halted:
+            self.step()
+
 
     def get_CCR(self):
         """
@@ -255,7 +305,7 @@ class HCS08(Computer):
         """
 
         #merge H and X to form HX, the 16-bit indexing register
-        return merge_byte(self.H, self.X)
+        return merge_word(self.H, self.X)
 
     def set_HX(self, value):
         """
@@ -353,7 +403,7 @@ class HCS08(Computer):
                 raise InvalidMemoryException('One of your instructions tried to read from address ' + repr(identifier) + ', which isn\'t a valid memory address.')
 
         #if the identifier is a register name, return the register's contents
-        elif identifier in self.REGISTERS:
+        elif identifier in self.REGISTERS or identifier in self.FLAGS:
             return self.__dict__[identifier]
 
         else:
@@ -404,8 +454,8 @@ class HCS08(Computer):
         #set the value pointed to by the stack pointer
         self.set_by_identifier(self.SP, byte)
 
-        #and increment the SP
-        self.SP += 1
+        #and grow the SP (the stack grows downward from the end of RAM)
+        self.SP -= 1
 
     def push_word(self, word):
         """
@@ -424,8 +474,8 @@ class HCS08(Computer):
             Pulls a byte from the stack, and returns it.
         """
 
-        #decrease the stack pointer by one
-        self.SP -= 1
+        #shrink the stack
+        self.SP += 1
 
         #and return the value it points to
         return self.get_by_identifier(self.SP)
@@ -459,7 +509,6 @@ class HCS08(Computer):
         return opcode
 
 
-
     def get_instruction_from_opcode(self, opcode):
         """
             Retrieves the HCS08_Instruction class which assembles to the given opcode.
@@ -485,6 +534,35 @@ class HCS08(Computer):
         raise InvalidOpcodeException('The microcontroller attempted to execute the opcode ' + repr(opcode) + ' which does not correspond to a valid instruction. Did the execution "flow" run past the end of your program?')
 
 
+    def serialize_state(self, readable=False):
+        """
+            Serializes the state into a format which can be easily exchanged with other programs.
+        """
+
+        buf = []
+
+        for identifier in self.REGISTERS + self.FLAGS + self.EXPOSED_RAM:
+
+            #read the value at the given location
+            value = self.get_by_identifier(identifier)
+
+            #if the readable flag is set, add a readable version of the item to the buffer
+            if readable:
+                buf.append('{id:>4} | ${value:0=2x}'.format(id=identifier, value=value) + "\n")
+
+            #otherwise, serialize using a minimal-space format
+            else:
+                buf.append('{id}={value};'.format(id=identifier, value=value))
+
+        #return the completed buffer
+        return ''.join(buf)
+
+    def __repr__(self):
+        """
+            Prints a human-readable version of the given CPU.
+        """
+        return self.device_name() + "\n" + self.serialize_state(readable=True)
+
 
 class MC9S08QG8(HCS08):
     """
@@ -496,3 +574,8 @@ class MC9S08QG8(HCS08):
             'ram': [ {'start': 0x0000, 'end': 0x025F}, {'start': 0x1800, 'end': 0x1850} ],
             'flash': [ {'start': 0xE000, 'end': 0xFFFF } ]
         }
+
+    @staticmethod
+    def device_name():
+        return 'Freescale Semicondcutors MC9S08QG8 (Simulated)'
+
