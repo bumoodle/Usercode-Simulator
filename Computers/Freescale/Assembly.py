@@ -19,7 +19,7 @@ import inspect, string
 import Instructions
 
 
-from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, dblQuotedString, ZeroOrMore, ParseException, opAssoc, operatorPrecedence, delimitedList, ParserElement
+from pyparsing import alphas, alphanums, Word, Optional, Literal, oneOf, nums, Group, restOfLine, CaselessLiteral, ZeroOrMore, ParseException, opAssoc, operatorPrecedence, ParserElement
 
 #enable packrat parsing for better performance
 ParserElement.enablePackrat()
@@ -37,6 +37,20 @@ class UnresolvedSymbolException(UserCodeException):
         Exception which indicates the user provided a symbol whose value could not be determined; such as a constant they forgot to define.
     """
     pass
+
+class DisallowedInstructionException(UserCodeException):
+    """
+        Exception which indicates the user tried to use an instruction which was either part of the blacklist, or not part of the whitelist.
+    """
+    pass
+
+class RequiredInstructionMissing(UserCodeException):
+    """
+        Exception which indicates the user failed to use one of the instructions in the requiredlist.
+    """
+    pass
+
+
 
 def get_all_mnemonics(predicate = lambda x : True):
     """
@@ -208,23 +222,65 @@ class Assembler(object):
         #store a referece to the flash memory in quesiton
         self.flash = flash_memory
 
+        #initialize the blacklists, whitelist, and required list
+        self.blacklist = []
+        self.whitelist = []
+        self.requiredlist = {}
 
-    def process_code(self, code, terminate_with_stop=False, blacklist=None, whitelist=None, required=None):
+
+    @staticmethod
+    def _parse_operand_list(oplist):
+
+        #switch the list to upper case
+        oplist = oplist.upper()
+
+        #replace all commas with whitespace, so we can accept comma-delimited lists:
+        oplist.replace(',', ' ')
+
+        #and split the list into names of operands
+        return oplist.split()
+
+
+    def set_blacklist(self, blacklist):
         """
+            Establishes a list of instructions not allowed in the user program.
+
+            Blacklist should be a space or comma-delimited list of instruction class names.
         """
 
-        #if black/whitelists were not provided, initialize them to empty lists
-        blacklist = () if blacklist is None else blacklist
-        whitelist = () if whitelist is None else whitelist
+        self.whitelist = []
+        self.blacklist = self._parse_operand_list(blacklist)
 
-        #if required was provided, build a dictionary which maps each required element to a boolean value indicating
-        #whether it has been used
-        if required is not None:
-            required = {i : False for in required}
 
-        #otherwise, set required to an empty dictionary
-        else:
-            required = {}
+    def set_whitelist(self, whitelist):
+        """
+            Establishes a list of instructions allowed in the user program; all other instructions will be disallowed.
+
+            Whitelist should be a space or comma-delimited list of instruction class names.
+        """
+
+        self.blacklist = []
+        self.whitelist = self._parse_operand_list(whitelist)
+
+    def set_required(self, required):
+        """
+            Establishes a list of instructions which must be used by the user program.
+            All of the given instructions _must_ be used. Resets the existing required list when called.
+
+            Required list should be a space or comma-delimited list of instruction class names.
+        """
+
+        #parse the required list
+        required_list = self._parse_operand_list(required)
+
+        #and use it create a dictionary of required elements
+        self.requiredlist = {i : False for i in required_list}
+
+
+    def process_code(self, code, terminate_with_stop=False, enforce_required=False):
+        """
+
+        """
 
         #if we were passed the code listing as a string, split it into lines
         if isinstance(code, str):
@@ -243,6 +299,14 @@ class Assembler(object):
         #if requested, add a STOP operation, to prevent execution from "flowing" past the end of the program
         if terminate_with_stop:
             self.add_stop()
+
+        #if we've been asked to enfore the requiredlist, do so:
+        if enforce_required:
+
+            #if any of the required instructions have not been used, raise an exception
+            for instr in self.requiredlist:
+                if not self.requiredlist[instr]:
+                    raise RequiredInstructionMissing('Your instructor has specified that you must use the ' + repr(instr) + ' instruction, which you did not use.')
 
 
     def add_stop(self):
@@ -300,9 +364,6 @@ class Assembler(object):
             Processes a single line of HCS08 assembly code, performing a first-pass assembly.
         """
 
-        #break the line into tokens
-        #tokens = Tokens.tokenize(line)
-
         #if the line contains no code (i.e. was a line of comments, or a blank line), we don't need to do anything
         if not tokens:
             return
@@ -317,6 +378,19 @@ class Assembler(object):
 
         #get the correct operation class by mnemonic
         op = get_operation_by_mnemonic(tokens['mnemonic'])
+
+        #get a quick reference to the operation's shorthand name
+        shorthand = op.shorthand()
+
+
+        #if the operation has been blacklisted (or isn't whitelisted, if a whitelist was provided) raise an exception
+        if shorthand in self.blacklist or (self.whitelist and shorthand not in self.whitelist):
+            raise DisallowedInstructionException('Your instructor has chosen to disallow the ' + op.shorthand + ' instruction. You will need to solve this problem in a different way.')
+
+        #if the operation is in the requiredlist, mark it as used
+        if op.shorthand in self.requiredlist:
+            self.requirelist[op.shorthand] = True
+
 
         #if we didn't get a valid operation, throw an error
         if op is None or not issubclass(op, Instructions.HCS08_Operation):

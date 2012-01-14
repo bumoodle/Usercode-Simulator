@@ -179,13 +179,25 @@ class HCS08(Computer):
 
 
 
-    def load_program(self, code):
+    def load_program(self, code, blacklist = None, whitelist = None, required = None):
         """
-            Convenince method, which calls the assemler on the given block of flash.
+           Loads a given program into program memory.
         """
 
         #create a new assembler targeting this device's flash
         asm = Assembler(self.flash)
+
+        #if an instruction blacklist has been provided, pass it to the assembler
+        if blacklist:
+            asm.set_blacklist(blacklist)
+
+        #if an instruction whitelist has been provided, pass it to the assembler
+        if whitelist:
+            asm.set_whitelist(whitelist)
+
+        #if a list of required instructions was provided, use it
+        if required:
+            asm.set_required(required)
 
         #and use it to assemble the given code
         asm.process_code(code)
@@ -205,11 +217,17 @@ class HCS08(Computer):
         self.initialize_registers()
         self.initialize_flags()
 
+        #reset the executed cycle count
+        self.Cycles = 0
+
         #set the program counter to the start of flash
         self.PC = min(self.flash)
 
         #set the stack pointer to the end of RAM
         self.SP = max(self.ram)
+
+        #ensure the CPU isn't halted
+        self._halted = False
 
     def step(self):
         """
@@ -228,6 +246,9 @@ class HCS08(Computer):
         #and execute the instruction in question
         instruction.execute(address_mode, self, operand)
 
+        #TODO: increase cycle count accurately
+        self.Cycles += 1
+
 
     def halt(self):
         """
@@ -236,11 +257,18 @@ class HCS08(Computer):
         """
         self._halted = True
 
+
     def resume(self):
         """
             Resumes opreation of the CPU by setting the halted flag to false.
         """
         self._halted = False
+
+    def is_halted():
+        """
+            Returns true iff the CPU has been halted.
+        """
+        return self._halted
 
 
     def single_step(self):
@@ -556,6 +584,13 @@ class HCS08(Computer):
 
         #return the completed buffer
         return ''.join(buf)
+
+
+    def limit_runtime(self, max_runtime):
+        """
+            Sets a cap on the total runtime, in bus cycles.
+        """
+        self.cycle_limit = max_runtime
 
     def __repr__(self):
         """
