@@ -904,7 +904,7 @@ class ADD(HCS08_Instruction):
         cpu.V = cpu.C ^ carry_less
 
         #compute the half carry
-        cpu.H = (cpu.A & 0x0F) + (operand & 0x0F)  > 127;
+        cpu.HC = (cpu.A & 0x0F) + (operand & 0x0F)  > 127;
 
         #finally, perform the operations
         cpu.A = (cpu.A + operand) % 256;
@@ -1136,7 +1136,7 @@ class BHCC(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if the half carry is clear
-        return not cpu.H
+        return not cpu.HC
 
 class BHCS(HCS08_Simple_Branch):
     """
@@ -1149,7 +1149,7 @@ class BHCS(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if the half carry is set
-        return cpu.H
+        return cpu.HC
 
 
 class BHI(HCS08_Simple_Branch):
@@ -1178,7 +1178,7 @@ class BHS(HCS08_Simple_Branch):
 
         #branch if >=, unsigned
         return not cpu.C
-
+terminate_with_stop=True, enforce_required=True)
 class BIH(HCS08_Simple_Branch):
     """
         BIH (Branch if IRQ Pin High)
@@ -1745,14 +1745,14 @@ class DAA(HCS08_Instruction):
 
         #perform the operation denoted on table A-2 of the instruction set spec
         #(transcribed to match the table exactly)
-        if      cpu.C == 0  and msn <= 8    and cpu.H == 0  and lsn >= 0xA  :   cpu.A += 0x06
-        elif    cpu.C == 0  and msn <= 9    and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x06
-        elif    cpu.C == 0  and msn >= 0xA  and cpu.H == 0  and lsn <= 9    :   cpu.A += 0x60;  cpu.C = 1
-        elif    cpu.C == 0  and msn >= 9    and cpu.H == 0  and lsn >= 0xA  :   cpu.A += 0x66;  cpu.C = 1
-        elif    cpu.C == 0  and msn >= 0xA  and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x66;  cpu.C = 1
-        elif    cpu.C == 1  and msn <= 2    and cpu.H == 0  and lsn <= 9    :   cpu.A += 0x60
-        elif    cpu.C == 1  and msn <= 2    and cpu.H == 0  and lsn >= 0xA  :   cpu.A += 0x66
-        elif    cpu.C == 1  and msn <= 3    and cpu.H == 1  and lsn <= 3    :   cpu.A += 0x66
+        if      cpu.C == 0  and msn <= 8    and cpu.HC == 0  and lsn >= 0xA  :   cpu.A += 0x06
+        elif    cpu.C == 0  and msn <= 9    and cpu.HC == 1  and lsn <= 3    :   cpu.A += 0x06
+        elif    cpu.C == 0  and msn >= 0xA  and cpu.HC == 0  and lsn <= 9    :   cpu.A += 0x60;  cpu.C = 1
+        elif    cpu.C == 0  and msn >= 9    and cpu.HC == 0  and lsn >= 0xA  :   cpu.A += 0x66;  cpu.C = 1
+        elif    cpu.C == 0  and msn >= 0xA  and cpu.HC == 1  and lsn <= 3    :   cpu.A += 0x66;  cpu.C = 1
+        elif    cpu.C == 1  and msn <= 2    and cpu.HC == 0  and lsn <= 9    :   cpu.A += 0x60
+        elif    cpu.C == 1  and msn <= 2    and cpu.HC == 0  and lsn >= 0xA  :   cpu.A += 0x66
+        elif    cpu.C == 1  and msn <= 3    and cpu.HC == 1  and lsn <= 3    :   cpu.A += 0x66
 
         #set the flags:
         cpu.V = None #undefined by instruction set spec
@@ -2084,7 +2084,7 @@ class MUL(HCS08_Instruction):
         cpu.X, cpu.A = split_word(cpu.X * cpu.A)
 
         #and set the relevant flags
-        cpu.H = 0
+        cpu.HC = 0
         cpu.C = 0
 
 
@@ -2428,7 +2428,7 @@ class STHX(HCS08_Instruction):
         target, _ = operand
 
         #store the value of HX to the target location
-        cpu.set_by_identifier(target, cpu.HX, is_word=True)
+        cpu.set_by_identifier(target, cpu.get_HX(), is_word=True)
 
 
 
@@ -2594,7 +2594,7 @@ class TSX(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #transfer the SP to HX, adding one
-        cpu.HX = (cpu.SP + 1) % 0xFFFF
+        cpu.set_HX((cpu.SP + 1) % 0xFFFF)
 
 
 class TXA(HCS08_Instruction):
@@ -2624,7 +2624,7 @@ class TXS(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #copy the value of the index register to the stack pointer
-        cpu.SP = (cpu.HX - 1) % 0xFFFF
+        cpu.SP = (cpu.get_HX() - 1) % 0xFFFF
 
 
 class WAIT(HCS08_Not_Implemented):

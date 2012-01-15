@@ -59,7 +59,7 @@ class HCS08(Computer):
     V = False
     """ Signed overflow.  """
 
-    H = False
+    HC = False
     """ Half carry. """
 
     I = False
@@ -103,7 +103,7 @@ class HCS08(Computer):
     REGISTERS = ('A', 'X', 'H', 'SP', 'PC')
     """ Convenience 'contsant', which contains the names of each of the device's registers. Can be used with self.__dict__ to iterate over each of the registers."""
 
-    FLAGS = ('V', 'H', 'I', 'N', 'Z', 'C')
+    FLAGS = ('V', 'HC', 'I', 'N', 'Z', 'C')
     """ Convenience 'contsant', which contains the names of each of the device's flags. Can be used with self.__dict__ to iterate over each of the flags."""
 
     EXPOSED_RAM = tuple(range(0x80, 0x85)) #DEBUG ONLY: make larger later
