@@ -93,6 +93,8 @@ class HCS08(Computer):
     Cycles = 0
     """ The amount of CPU cycles since the last device reset. """
 
+    cycle_limit = float("inf")
+    """ Initially, allow an unlimited amount of execution cycles. """
 
     #
     # Shortcuts to registers, and relevant RAM addresses.
@@ -200,7 +202,7 @@ class HCS08(Computer):
             asm.set_required(required)
 
         #and use it to assemble the given code
-        asm.process_code(code)
+        asm.process_code(code, terminate_with_stop=True, enforce_required=True)
 
         #reset the microcontroller
         self.reset()
@@ -232,6 +234,8 @@ class HCS08(Computer):
     def step(self):
         """
             Single steps (executes a single operation).
+
+            This will perform a single instruction, even if the CPU is halted.
         """
 
         #get the opcode at the address specified by the PC; incrementing the PC in the process
@@ -243,11 +247,18 @@ class HCS08(Computer):
         #read the operand
         operand = instruction.read_operand(address_mode, self)
 
+        print 'Executed', instruction
+
         #and execute the instruction in question
         instruction.execute(address_mode, self, operand)
 
         #TODO: increase cycle count accurately
         self.Cycles += 1
+
+        #if we've exceeded our runtime limit, halt the CPU
+        if self.Cycles > self.cycle_limit:
+            self.halt()
+
 
 
     def halt(self):
@@ -585,6 +596,28 @@ class HCS08(Computer):
         #return the completed buffer
         return ''.join(buf)
 
+    def unserialize_state(self, serial):
+        """
+            Reads state data from a serialized state, overriding the current state of the microprocessor.
+
+            State elements may be provided selectively; for example, this method can be used to only override the value of A.
+        """
+
+        #split the serialized data into a list of term definitions
+        terms = serial.split(';')
+
+        #for each term
+        for term in terms:
+
+            #split the term into its name and value
+            identifier, _, value = term.partition('=')
+
+            #if a valid identifier was provided, adjust the state accordingly
+            if identifier:
+                self.set_by_identifier(identifier, value)
+
+
+
 
     def limit_runtime(self, max_runtime):
         """
@@ -592,11 +625,16 @@ class HCS08(Computer):
         """
         self.cycle_limit = max_runtime
 
+
     def __repr__(self):
         """
             Prints a human-readable version of the given CPU.
         """
         return self.device_name() + "\n" + self.serialize_state(readable=True)
+
+    @staticmethod
+    def shorthand():
+        return 'HCS08'
 
 
 class MC9S08QG8(HCS08):

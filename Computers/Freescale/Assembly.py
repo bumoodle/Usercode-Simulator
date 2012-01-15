@@ -314,7 +314,7 @@ class Assembler(object):
             Adds a STOP operand at the current location, which indicates to the CPU that execution should be halted.
         """
 
-        self.flash[self.location] = Instructions.STOP.machine_code['inh']
+        self.flash[self.location] = Instructions.STOP.machine_codes['inh']
         self.location += 1
 
 
@@ -382,15 +382,13 @@ class Assembler(object):
         #get a quick reference to the operation's shorthand name
         shorthand = op.shorthand()
 
-
         #if the operation has been blacklisted (or isn't whitelisted, if a whitelist was provided) raise an exception
         if shorthand in self.blacklist or (self.whitelist and shorthand not in self.whitelist):
-            raise DisallowedInstructionException('Your instructor has chosen to disallow the ' + op.shorthand + ' instruction. You will need to solve this problem in a different way.')
+            raise DisallowedInstructionException('Your instructor has chosen to disallow the ' + shorthand + ' instruction. You will need to solve this problem in a different way.')
 
         #if the operation is in the requiredlist, mark it as used
-        if op.shorthand in self.requiredlist:
-            self.requirelist[op.shorthand] = True
-
+        if shorthand in self.requiredlist:
+            self.requiredlist[shorthand] = True
 
         #if we didn't get a valid operation, throw an error
         if op is None or not issubclass(op, Instructions.HCS08_Operation):
