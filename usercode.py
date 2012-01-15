@@ -12,8 +12,7 @@ import sys
 import argparse
 import readline
 
-#debug:
-from pyparsing import ParseException
+from Computers.Exceptions import UserCodeException
 from Computers.Freescale.HCS08 import MC9S08QG8;
 
 active = ''
@@ -25,7 +24,7 @@ def main():
 
     """
 
-    global active
+    global active, prompt
 
     #create a new argument parser, which parses the command line arguments
     parser = argparse.ArgumentParser(description='Runs abstract pieces of a user code on one of various turing-equivalent machiness.')
@@ -33,12 +32,19 @@ def main():
     #if an input file is specified, use it; otherwise, default to the standard input
     #parser.add_argument('codefile', metavar='codefile', nargs='?', type=argparse.FileType('r'), default=sys.stdin, help='The file containing the user code to be executed.')
     parser.add_argument('--system', '-s', type=str, default='hcs08', help='The system on which the user code will be executed.')
+    parser.add_argument('--prompt', '-p', type=str, help='Specifies the prompt string. Global variables (such as "active") can be referenced using python formatting notation.')
+    parser.add_argument('--noprompt', action='store_true', help='If set, the prompt will be an empty string.')
+
 
     #parse this argument's processes
     args = parser.parse_args()
 
-    #get the user code as a list of of lines
-    #code = args.codefile.read()
+    #if the user has specified a prompt, use it
+    if args.prompt:
+        prompt = args.prompt
+
+    if args.noprompt:
+        prompt = ''
 
     #if a generic HCS08 is specified, choose the MC9S08QG8
     if args.system in ('hcs08', 'MC9S08QG8'):
@@ -58,43 +64,77 @@ def mainloop(system):
     #until we're manually interrupted, run interactive mode indefinitely
     while True:
 
-        #get a command from the user
-        command, argument = get_command()
+        try:
 
-        #if the q command was offered, quit the program
-        if command in ('q', 'quit'):
-            quit()
+            #get a command from the user
+            command, argument = get_command()
 
-        #upon the 'code' command, read in the user code
-        elif command in ('c', 'code'):
-            read_program(system, argument, blacklist, whitelist, requiredlist)
+            #if the q command was offered, quit the program
+            if command in ('q', 'quit', 'x', 'exit'):
+                quit()
 
-        #step, when requested
-        elif command in ('s', 'step'):
-            system.step()
+            #upon the 'code' command, read in the user code
+            elif command in ('c', 'code'):
+                read_program(system, argument, blacklist, whitelist, requiredlist)
+                print "Loaded."
 
-        #print a serialized version of the system's state
-        elif command in ('g', 'getstate'):
-            print system.serialize_state()
+            #step, when requested
+            elif command in ('s', 'step'):
 
-        elif command in ('l', 'loadstate'):
-            system.unserialize_state(argument)
+                #if the system isn't halted, step
+                if not system.halted():
+                    system.step()
+                    print "Stepped."
 
-        #reset the system, when requested
-        elif command in ('r', 'reset'):
-            system.reset()
+                #if the system is halted (which may have occurred as a result of the step)
+                if system.halted():
+                    print 'Halted.'
 
-        #set the system blacklist (interpreted by the system)
-        elif command in ('bl', 'blacklist'):
-            blacklist = argument
+            elif command in ('cc', 'cont', 'continue'):
 
-        #set the system whitelist (interpeted by the system)
-        elif command in ('wl', 'whitelist'):
-            whitelist = argument
+                #TODO: handle breakpoints
+                breakpoint = lambda x: False
 
-        #set the system require-list (interpreted by the system)
-        elif command in ('rl', 'require'):
-            requiredlist = argument
+                system.run_until(breakpoint)
+                print "Halted."
+
+            #print a serialized version of the system's state
+            elif command in ('g', 'getstate'):
+                print system.serialize_state()
+
+            elif command in ('l', 'loadstate'):
+                system.unserialize_state(argument)
+
+            #reset the system, when requested
+            elif command in ('r', 'reset'):
+                system.reset()
+
+            #set the system blacklist (interpreted by the system)
+            elif command in ('bl', 'blacklist'):
+                blacklist = argument
+                print "Updated."
+
+            #set the system whitelist (interpeted by the system)
+            elif command in ('wl', 'whitelist'):
+                whitelist = argument
+                print "Updated."
+
+            #set the system require-list (interpreted by the system)
+            elif command in ('rl', 'require'):
+                requiredlist = argument
+                print "Updated."
+
+            #pass system specific commands to the target system
+            elif command in ('sys', 'system'):
+                system.handle_system_command(argument)
+
+            #flush the stdout
+            sys.stdout.flush()
+
+        #catch any errors in the user code, and display them nicely, here
+        except UserCodeException as e:
+            print 'ERROR:', e.message
+            sys.stdout.flush()
 
 
 

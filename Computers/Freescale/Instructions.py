@@ -250,9 +250,7 @@ class HCS08_Instruction(HCS08_Operation):
             return code
 
         except KeyError as e:
-            raise InvalidAddressingException('Invalid addressing mode ' + repr(e.args) +  ' for instruction ' + cls.shorthand() + '; operand was ' + repr(operand) + '.');
-
-
+            raise InvalidAddressingException('Invalid addressing mode ' + repr(e.args[0]) +  ' for instruction ' + cls.shorthand() + '; operand was ' + repr(operand) + '.');
 
 
     @classmethod
@@ -424,7 +422,7 @@ class HCS08_Instruction(HCS08_Operation):
 
 
             #calculate the 16-bit target address, allowing for rollover, so signed addition works
-            addr = (base + offset) % 0xFFFF
+            addr = (base + offset) % 0x10000
 
             #return the byte at the computed address
             return (addr, cpu.get_by_identifier(addr, is_word=word_operands))
@@ -1685,7 +1683,7 @@ class CPHX(HCS08_Instruction):
         _, operand = operand
 
         #perform a theoretical subtraction, which we will use to determine the flag values
-        result = (cpu.get_HX() - operand) % 0xFFFF
+        result = (cpu.get_HX() - operand) % 0x10000
 
         #get quick references to the signs of the accumulator, the operand, and the result
         hx_sign = cpu.get_HX() >  0x7FFF
@@ -2438,7 +2436,7 @@ class STOP(HCS08_Instruction):
     """
 
     mnemonics = ['stop']
-    machine_codes = {'inh': 0x8E }
+    machine_codes = {'inh': [0x8E] }
 
     @classmethod
     def execute(cls, address_mode, cpu, operand):
@@ -2594,7 +2592,7 @@ class TSX(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #transfer the SP to HX, adding one
-        cpu.set_HX((cpu.SP + 1) % 0xFFFF)
+        cpu.set_HX((cpu.SP + 1) % 0x10000)
 
 
 class TXA(HCS08_Instruction):
@@ -2624,7 +2622,7 @@ class TXS(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #copy the value of the index register to the stack pointer
-        cpu.SP = (cpu.get_HX() - 1) % 0xFFFF
+        cpu.SP = (cpu.get_HX() - 1) % 0x10000
 
 
 class WAIT(HCS08_Not_Implemented):

@@ -50,6 +50,12 @@ class RequiredInstructionMissing(UserCodeException):
     """
     pass
 
+class InvalidSyntaxException(UserCodeException):
+    """
+        Exception which indicates a syntax error in the user code.
+    """
+    pass
+
 
 
 def get_all_mnemonics(predicate = lambda x : True):
@@ -198,9 +204,7 @@ class Tokens:
         try:
             return cls.asm_line.parseString(asm, parseAll=True).asDict()
         except ParseException as e:
-            print "Invalid syntax!"
-            print e.markInputline('--!--');
-            #raise new InvalidSyntaxError()
+            raise InvalidSyntaxException('A syntax error exists in your code, near: ' + e.markInputline('--!--') + '.')
 
 class Assembler(object):
 
@@ -314,7 +318,7 @@ class Assembler(object):
             Adds a STOP operand at the current location, which indicates to the CPU that execution should be halted.
         """
 
-        self.flash[self.location] = Instructions.STOP.machine_codes['inh']
+        self.flash[self.location] = Instructions.STOP.machine_codes['inh'][0]
         self.location += 1
 
 
@@ -356,7 +360,7 @@ class Assembler(object):
                         program[byte] = (self.symbols[symbol_name] >> (8 * byte_num)) & 0xFF;
 
             except KeyError as e:
-                raise UnresolvedSymbolException('Could not determine the value of the symbol ' + repr(e.arguments) + '. Are you sure you defined it?')
+                raise UnresolvedSymbolException('Could not determine the value of the symbol ' + repr(e.args[0]) + '. Are you sure you defined it?')
 
 
     def process_line(self, tokens):
@@ -414,18 +418,6 @@ class Assembler(object):
             self.location += 1
 
 
-
-
-def assemble_into_flash(flash_memory, code):
-    """
-        Assembles a given code listing (string, or list of lines) into HCS08 assembly, and populates the flash memory (address => value dictionary) provided.
-    """
-
-    #convert the code into tokens
-    code = [Tokens.tokenize(line) for line in code]
-
-    #create a new assembler object
-    asm = Assembler(flash_memory)
 
 
 

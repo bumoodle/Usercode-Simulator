@@ -107,6 +107,10 @@ class HCS08(Computer):
     """ Convenience 'contsant', which contains the names of each of the device's flags. Can be used with self.__dict__ to iterate over each of the flags."""
 
     EXPOSED_RAM = tuple(range(0x80, 0x85)) #DEBUG ONLY: make larger later
+    """ Contains a range of RAM addresses will be returned during state serialization. """
+
+    EXPOSED_PROPERTIES = ('Cycles',)
+    """ Contains a list of properties which will be returned during state serialization. """
 
     def __init__(self, code=None):
         """
@@ -186,6 +190,9 @@ class HCS08(Computer):
            Loads a given program into program memory.
         """
 
+        #reset the device's flash to its original state
+        self.initialize_flash()
+
         #create a new assembler targeting this device's flash
         asm = Assembler(self.flash)
 
@@ -247,8 +254,6 @@ class HCS08(Computer):
         #read the operand
         operand = instruction.read_operand(address_mode, self)
 
-        print 'Executed', instruction
-
         #and execute the instruction in question
         instruction.execute(address_mode, self, operand)
 
@@ -275,7 +280,7 @@ class HCS08(Computer):
         """
         self._halted = False
 
-    def is_halted():
+    def halted(self):
         """
             Returns true iff the CPU has been halted.
         """
@@ -401,7 +406,11 @@ class HCS08(Computer):
 
         #if the identifer is a register name, set that register's value
         elif identifier in self.REGISTERS:
-            self.__dict__[identifier] = value
+
+            if is_word:
+               self.__dict__[identifier] = value % 0x10000
+            else:
+               self.__dict__[identifier] = value % 0x100
 
 
     def get_by_identifier(self, identifier, is_word=False):
@@ -442,7 +451,7 @@ class HCS08(Computer):
                 raise InvalidMemoryException('One of your instructions tried to read from address ' + repr(identifier) + ', which isn\'t a valid memory address.')
 
         #if the identifier is a register name, return the register's contents
-        elif identifier in self.REGISTERS or identifier in self.FLAGS:
+        elif identifier in self.REGISTERS or identifier in self.FLAGS or identifier in self.EXPOSED_PROPERTIES:
             return self.__dict__[identifier]
 
         else:
@@ -580,10 +589,11 @@ class HCS08(Computer):
 
         buf = []
 
-        for identifier in self.REGISTERS + self.FLAGS + self.EXPOSED_RAM:
+        for identifier in self.REGISTERS + self.FLAGS + self.EXPOSED_RAM + self.EXPOSED_PROPERTIES:
 
             #read the value at the given location
             value = self.get_by_identifier(identifier)
+            value = int(value)
 
             #if the readable flag is set, add a readable version of the item to the buffer
             if readable:
@@ -591,7 +601,7 @@ class HCS08(Computer):
 
             #otherwise, serialize using a minimal-space format
             else:
-                buf.append('{id}={value};'.format(id=identifier, value=value))
+                buf.append('{id}={value}&'.format(id=identifier, value=value))
 
         #return the completed buffer
         return ''.join(buf)
@@ -604,7 +614,7 @@ class HCS08(Computer):
         """
 
         #split the serialized data into a list of term definitions
-        terms = serial.split(';')
+        terms = serial.split('&')
 
         #for each term
         for term in terms:
@@ -612,11 +622,27 @@ class HCS08(Computer):
             #split the term into its name and value
             identifier, _, value = term.partition('=')
 
+            try:
+                value = int(value)
+            except TypeError:
+                raise UserCodeException('An value was provided for ' + identifier + ' by the grading routine provided by your instructor. Please bring this to your instructor\'s attention.')
+
             #if a valid identifier was provided, adjust the state accordingly
             if identifier:
                 self.set_by_identifier(identifier, value)
 
 
+    def handle_system_command(self, command):
+        """
+            Handles sytem-specific commands.
+        """
+
+        #seperate the argument from the command
+        command, _, argument = command.partition(' ')
+
+        #if a flash dump has been requested, dump the contents of flash
+        if command in ('dumpflash', 'flash', 'flashdump'):
+            print [hex(self.flash[i]) for i in self.flash]
 
 
     def limit_runtime(self, max_runtime):
