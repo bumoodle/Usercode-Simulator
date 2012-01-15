@@ -1178,7 +1178,7 @@ class BHS(HCS08_Simple_Branch):
 
         #branch if >=, unsigned
         return not cpu.C
-terminate_with_stop=True, enforce_required=True)
+
 class BIH(HCS08_Simple_Branch):
     """
         BIH (Branch if IRQ Pin High)
