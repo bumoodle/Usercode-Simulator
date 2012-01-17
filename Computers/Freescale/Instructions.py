@@ -236,8 +236,8 @@ class HCS08_Instruction(HCS08_Operation):
                     code = cls.machine_codes[mode_byte]
                     code.append(operand)
 
-            #if the operand is larger than a byte, split it
-            elif operand > 255:
+            #if the operand is larger than a byte, or the operand does not support mode_byte, split it, and use mode_word
+            elif operand > 255 or (mode_byte not in cls.machine_codes):
                 code = cls.machine_codes[mode_word][:]
                 code.extend(split_word(operand))
 
@@ -336,7 +336,6 @@ class HCS08_Instruction(HCS08_Operation):
 
 
         except KeyError as e:
-            print tokens
             raise InvalidAddressingException('Invalid addressing mode ' + repr(e.args[0]).upper() + ' for instruction ' + cls.shorthand() + '.')
 
     @staticmethod
@@ -536,7 +535,7 @@ class HCS08_Constructed_Branch(HCS08_Instruction_with_AXH_Inherent):
         base = super(HCS08_Constructed_Branch, cls).read_operand(address_mode, cpu)
 
         #and return it, plus a sign extended single byte, which encodes the branch offset
-        return base + (None, sign_extend(cpu.fetch_byte()))
+        return base, (None, sign_extend(cpu.fetch_byte()))
 
 
 
@@ -568,8 +567,11 @@ class HCS08_Simple_Branch(HCS08_Instruction):
             Execute the simple branch instruction.
         """
 
+        #discard everything except the branch offset
+        _, operand = operand
+
         #if the branch condition is met
-        if cls.predicate():
+        if cls.predicate(cpu):
             cpu.PC += operand
 
     @classmethod
@@ -660,7 +662,7 @@ class HCS08_Bit_Branch(HCS08_Instruction):
 
         #bit branches have two "operands":
         #a single direct value, from RAM
-        addr = cpu.ram[cpu.fetch_byte()]
+        addr = cpu.fetch_byte()
 
         #and a branch offset
         offset = cpu.fetch_byte()
@@ -804,7 +806,6 @@ class DC(HCS08_PseudoOp):
                     raw_defines.extend(raw)
 
         except TypeError as e:
-            print defines
             raise InvalidAddressingException('One or more of your ' + cls.shorthand() + ' statements is malformed, near ' + repr(item) + ' [Debug information:' + repr(e) + ']' )
 
 
@@ -860,7 +861,7 @@ class ADC(HCS08_Instruction):
         carry = machine.C
 
         #calculate the flags
-        machine.C = (machine.A + operand + machine.C) > 256;
+        machine.C = (machine.A + operand + machine.C) > 255;
 
         #get the carry from the 7th to 8th bit
         carry_less = (machine.A & 0x7F) + (operand & 0x7F) + carry > 127;
@@ -869,14 +870,13 @@ class ADC(HCS08_Instruction):
         machine.V = machine.C ^ carry_less
 
         #compute the half carry
-        machine.H = (machine.A & 0x0F) + (operand & 0x0F) + carry > 16;
+        machine.HC = (machine.A & 0x0F) + (operand & 0x0F) + carry > 15;
 
         #finally, perform the operations
         machine.A = (machine.A + operand + carry) % 256;
 
         #set the negative flag according to the sign bit, and the zero flag if the result is zero
-        machine.N = machine.A > 127;
-        machine.Z = machine.A == 0;
+        machine.update_NZ()
 
 
 class ADD(HCS08_Instruction):
@@ -893,7 +893,7 @@ class ADD(HCS08_Instruction):
         _, operand = operand
 
         #calculate the flags
-        cpu.C = (cpu.A + cpu.C) > 256;
+        cpu.C = (cpu.A + operand) > 255;
 
         #get the carry from the 7th to 8th bit
         carry_less = (cpu.A & 0x7F) + (operand & 0x7F) > 127;
@@ -902,7 +902,7 @@ class ADD(HCS08_Instruction):
         cpu.V = cpu.C ^ carry_less
 
         #compute the half carry
-        cpu.HC = (cpu.A & 0x0F) + (operand & 0x0F)  > 127;
+        cpu.HC = (cpu.A & 0x0F) + (operand & 0x0F)  > 0xF;
 
         #finally, perform the operations
         cpu.A = (cpu.A + operand) % 256;
@@ -1005,13 +1005,13 @@ class ASR(HCS08_Instruction_with_AXH_Inherent):
     def execute(cls, address_mode, cpu, operand):
 
         #split the operand into its target location and value
-        target, value = operand[0]
+        target, value = operand
 
         #set the C flag if the resulting shift right will "push" out a 1
         cpu.C = value & 0x01
 
         #calculate the result
-        result = operand >> 1 | (operand & 0x80)
+        result = value >> 1 | (value & 0x80)
 
         #and store it to the appropriate location
         cpu.set_by_identifier(target, result)
@@ -1049,7 +1049,7 @@ class BCLR(HCS08_Bit_Operation):
     def execute(cls, address_mode, cpu, operand):
 
         #split the operand into its target location and value
-        target, value = operand[0]
+        target, value = operand
 
         #get a bit mask from the address mode
         mask = cls.get_mask_from_address_mode(address_mode)
@@ -1136,6 +1136,7 @@ class BHCC(HCS08_Simple_Branch):
         #branch if the half carry is clear
         return not cpu.HC
 
+
 class BHCS(HCS08_Simple_Branch):
     """
         BHCS (Branch if Half Carry Set)
@@ -1217,7 +1218,7 @@ class BIT(HCS08_Instruction):
         _, operand = operand
 
         #calculate the result of the accumulator and'd with the operand, but don't set the result
-        result = cpu.A and operand
+        result = cpu.A & operand
 
         #clear the V flag, as specified by the instruction set specs
         cpu.V = False
@@ -1243,7 +1244,7 @@ class BLE(HCS08_Simple_Branch):
 
 class BLO(HCS08_Simple_Branch):
     """
-        BLO (Branc if Lower)
+        BLO (Branch if Lower)
     """
     mnemonics = ['blo']
     machine_codes = { 'rel': [0x25] }
@@ -1280,7 +1281,7 @@ class BLT(HCS08_Simple_Branch):
     def predicate(cls, cpu):
 
         #branch if <, signed
-        return cpu.N ^ cpu.Z
+        return cpu.N ^ cpu.V
 
 
 class BMC(HCS08_Simple_Branch):
@@ -1330,7 +1331,7 @@ class BNE(HCS08_Simple_Branch):
 
     @classmethod
     def predicate(cls, cpu):
-        return cpu.Z
+        return not cpu.Z
 
 
 class BPL(HCS08_Simple_Branch):
@@ -1370,7 +1371,7 @@ class BRCLR(HCS08_Bit_Branch):
     def execute(cls, address_mode, cpu, operand):
 
         #extract the operand value, discarding its address
-        _, operand = operand[0]
+        _, value = operand[0]
 
         #and extract the branch target
         _, offset =  operand[1]
@@ -1379,7 +1380,7 @@ class BRCLR(HCS08_Bit_Branch):
         mask = HCS08_Bit_Operation.get_mask_from_address_mode(address_mode)
 
         #if the given bit is clear (the operand AND's with the mask to be zero), branch
-        if not (mask & operand):
+        if not (mask & value):
             cpu.PC += offset
 
 
@@ -1432,7 +1433,7 @@ class BSET(HCS08_Bit_Operation):
     def execute(cls, address_mode, cpu, operand):
 
         #split the operand into its target location and value
-        target, value = operand[0]
+        target, value = operand
 
         #get a bit mask from the address mode
         mask = cls.get_mask_from_address_mode(address_mode)
@@ -1510,18 +1511,18 @@ class CBEQ(HCS08_Constructed_Branch):
     def execute(cls, address_mode, cpu, operand):
 
         #extract the operand value
-        _, operand = operand[0]
+        _, value = operand[0]
 
         #and extract the branch offset
         _, offset = operand[1]
 
         #if we're in the special CBEQX mode, compare X and the operand
         if address_mode == 'inhx':
-            predicate = (cpu.X == operand)
+            predicate = (cpu.X == value)
 
         #otherwise, compare the operand to the accumulator
         else:
-            predicate = (cpu.A == operand)
+            predicate = (cpu.A == value)
 
         #if the branch condition was met, branch
         if predicate:
@@ -1768,14 +1769,15 @@ class DBNZ(HCS08_Constructed_Branch):
     @classmethod
     def execute(cls, address_mode, cpu, operand):
 
+
         #extract the operand value, and location
-        target, operand = operand[0]
+        target, value = operand[0]
 
         #extract the branch offset
         _, offset = operand[1]
 
         #decrement the operand
-        cpu.set_by_identifier(target, operand - 1)
+        cpu.set_by_identifier(target, value - 1)
 
         #and branch if the post-decrement result is not zero
         if operand == 1:
@@ -1813,15 +1815,25 @@ class DIV(HCS08_Instruction):
     @classmethod
     def execute(cls, address_mode, cpu, operand):
 
-        #extract the operand value, discarding its address
-        _, operand = operand
-
         #get H:A, which is used as the number to be divided
         ha = merge_word(cpu.H, cpu.A)
 
         #perform division, and store the result
-        cpu.A = ha // cpu.X
-        cpu.H = ha % cpu.A
+        try:
+            cpu.A = ha // cpu.X
+            cpu.H = ha % cpu.A
+
+            #if the division completed succesfully, clear the carry bit
+            cpu.C = 0
+
+        #if we tried to divide by zero, set the carry bit
+        except ZeroDivisionError:
+
+            cpu.C = 1
+
+        #set the zero flag, after the result
+        cpu.Z = (cpu.A == 0)
+
 
 class EOR(HCS08_Instruction):
     """
@@ -2001,7 +2013,7 @@ class LSR(HCS08_Instruction_with_AXH_Inherent):
     def execute(cls, address_mode, cpu, operand):
 
         #split the operand into its target location and value
-        target, value = operand[0]
+        target, value = operand
 
         #set the C flag if the resulting shift right will "push" out a 1
         cpu.C = value & 0x01
@@ -2230,7 +2242,7 @@ class ROL(HCS08_Instruction_with_AXH_Inherent):
         result = ((operand << 1) % 256) | cpu.C
 
         #store it to the appropriate register
-        cpu.set_by_value(target, result)
+        cpu.set_by_identifier(target, result)
 
         #and set the new carry value
         cpu.C = operand > 128
@@ -2259,7 +2271,7 @@ class ROR(HCS08_Instruction_with_AXH_Inherent):
         result = ((operand >> 1) % 256) | (cpu.C << 7)
 
         #store it to the appropriate register
-        cpu.set_by_value(target, result)
+        cpu.set_by_identifier(target, result)
 
         #and set the new carry value
         cpu.C = (operand & 0x01 == 1)

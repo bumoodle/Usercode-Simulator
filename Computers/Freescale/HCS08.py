@@ -405,7 +405,7 @@ class HCS08(Computer):
                 self.set_ram_byte(identifier, value)
 
         #if the identifer is a register name, set that register's value
-        elif identifier in self.REGISTERS:
+        elif identifier in self.REGISTERS or identifier in self.FLAGS:
 
             if is_word:
                self.__dict__[identifier] = value % 0x10000
@@ -670,11 +670,27 @@ class MC9S08QG8(HCS08):
 
     memory_map = \
         {
-            'ram': [ {'start': 0x0000, 'end': 0x025F}, {'start': 0x1800, 'end': 0x1850} ],
+            'ram': [ {'start': 0x0000, 'end': 0x025F}, {'start': 0x1800, 'end': 0x184F} ],
             'flash': [ {'start': 0xE000, 'end': 0xFFFF } ]
         }
 
     @staticmethod
     def device_name():
         return 'Freescale Semicondcutors MC9S08QG8 (Simulated)'
+
+
+class MC9S08QG4(HCS08):
+    """
+        Device-specific mappings for the MC8S08QG8.
+    """
+
+    memory_map = \
+        {
+            'ram': [ {'start': 0x0000, 'end': 0x015F}, {'start': 0x1800, 'end': 0x184F} ],
+            'flash': [ {'start': 0xF000, 'end': 0xFFFF } ]
+        }
+
+    @staticmethod
+    def device_name():
+        return 'Freescale Semicondcutors MC9S08QG4 (Simulated)'
 
