@@ -1791,8 +1791,6 @@ class DBNZ(HCS08_Constructed_Branch):
             #determine the branch offset, which has been interpreted as a direct
             offset = _calculate_branch_offset(tokens['direct'], symbols_list, assembler)
 
-            print offset
-
             #and append the branch target
             base.append(offset)
 
