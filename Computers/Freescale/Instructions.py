@@ -572,7 +572,7 @@ class HCS08_Simple_Branch(HCS08_Instruction):
 
         #if the branch condition is met
         if cls.predicate(cpu):
-            cpu.PC += operand
+            cpu.PC = (cpu.PC + sign_extend(operand)) % 0x10000
 
     @classmethod
     def predicate(cls, cpu):
@@ -1381,7 +1381,7 @@ class BRCLR(HCS08_Bit_Branch):
 
         #if the given bit is clear (the operand AND's with the mask to be zero), branch
         if not (mask & value):
-            cpu.PC += offset
+            cpu.PC = (cpu.PC + sign_extend(offset)) % 0x10000
 
 
 class BRN(HCS08_Simple_Branch):
@@ -1460,7 +1460,7 @@ class BSR(HCS08_Simple_Branch):
         cpu.push_word(cpu.PC)
 
         #and branch to the subroutine
-        cpu.PC += offset
+        cpu.PC = (cpu.PC + sign_extend(offset)) % 0x10000
 
 
 
@@ -1526,7 +1526,7 @@ class CBEQ(HCS08_Constructed_Branch):
 
         #if the branch condition was met, branch
         if predicate:
-            cpu.PC += offset
+            cpu.PC = (cpu.PC + sign_extend(offset)) % 0x10000
 
 
 
@@ -1777,6 +1777,36 @@ class DBNZ(HCS08_Constructed_Branch):
     machine_codes = _machine_codes_axh_inherent(0xB)
 
     @classmethod
+    def assemble(cls, tokens, symbols_list, assembler):
+
+        #if this is one of the two special-case inherent modes
+        if tokens['mnemonic'] in ('dbnza', 'dbnzx'):
+
+            #retrieve the core machine code, according to mnemonic
+            if tokens['mnemonic'] == 'dbnza':
+                base = cls.machine_codes['inha'][:]
+            else:
+                base = cls.machine_codes['inhx'][:]
+
+            #determine the branch offset, which has been interpreted as a direct
+            offset = _calculate_branch_offset(tokens['direct'], symbols_list, assembler)
+
+            print offset
+
+            #and append the branch target
+            base.append(offset)
+
+            #return the newly created machine code
+            return base
+
+        #otherwise, delegate to the base class
+        else:
+
+            #delegate to the base class
+            return super(DBNZ, cls).assemble(tokens, symbols_list, assembler)
+
+
+    @classmethod
     def execute(cls, address_mode, cpu, operand):
 
 
@@ -1791,7 +1821,7 @@ class DBNZ(HCS08_Constructed_Branch):
 
         #and branch if the post-decrement result is not zero
         if value != 1:
-            cpu.PC += offset
+            cpu.PC = (cpu.PC + sign_extend(offset)) % 0x10000
 
 
 class DEC(HCS08_Instruction_with_AXH_Inherent):
