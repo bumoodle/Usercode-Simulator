@@ -347,11 +347,22 @@ class Assembler(object):
                     #if we have a relative placeholder, then compute the correct offset
                     if isinstance(byte_num, tuple):
 
+                        print "RELATIVE ADDRESS", byte_num
+
                         #unpack the relative base, which indicates which address the offset should be calculated with respect to
                         _, base = byte_num
 
                         #replace the placeholder with the amount that would need to be added to base to reach the correct value
-                        program[byte] = base - self.symbols[symbol_name]
+                        program[byte] = (self.symbols[symbol_name] - base)
+
+                        #if we're trying to resolve a branch to an address which is out of range, raise an exception
+                        if program[byte] > 127 or program[byte] < -128:
+                            raise InvalidBranchException('Could not branch to the label ' + symbol_name + 'from address ' + hex(base) + ', as it was out of branch range. See your textbook for more information.')
+
+                        #otherwise, format the value to fit within a byte by placing the value in two's compliment notation
+                        else:
+                            program[byte] = program[byte] % 256
+
 
                     #otherwise, we have a placeholder which repesents part of a multi-byte value
                     else:

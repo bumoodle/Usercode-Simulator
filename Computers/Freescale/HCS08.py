@@ -211,6 +211,10 @@ class HCS08(Computer):
         #and use it to assemble the given code
         asm.process_code(code, terminate_with_stop=True, enforce_required=True)
 
+        #store the symbol list from the assembler, for use with breakpoints
+        self.symbols = asm.symbols
+
+        #store the symbol list from the assembler, for use with breakpoints
         #reset the microcontroller
         self.reset()
 
@@ -659,6 +663,10 @@ class HCS08(Computer):
         #if a flash dump has been requested, dump the contents of flash
         if command in ('dumpflash', 'flash', 'flashdump'):
             print [hex(self.flash[i]) for i in self.flash]
+
+        #handle the 'symbols' instruction by printing the symbol list
+        elif command in ('symbol', 'symbols'):
+            print {i : hex(self.symbols[i]) for i in self.symbols}
 
 
     def limit_runtime(self, max_runtime):
