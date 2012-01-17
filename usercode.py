@@ -128,6 +128,18 @@ def mainloop(system):
             elif command in ('sys', 'system'):
                 system.handle_system_command(argument)
 
+            #pass through runtime limits
+            elif command in ('rtl', 'runlimit'):
+
+                try:
+                    limit = int(argument)
+                    system.limit_runtime(limit)
+                    print 'Limited.'
+
+                except TypeError as e:
+                    print 'Not understood; limit unchanged.'
+
+
             #flush the stdout
             sys.stdout.flush()
 
