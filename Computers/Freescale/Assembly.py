@@ -347,8 +347,6 @@ class Assembler(object):
                     #if we have a relative placeholder, then compute the correct offset
                     if isinstance(byte_num, tuple):
 
-                        print "RELATIVE ADDRESS", byte_num
-
                         #unpack the relative base, which indicates which address the offset should be calculated with respect to
                         _, base = byte_num
 
