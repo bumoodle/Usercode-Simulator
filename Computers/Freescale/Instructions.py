@@ -1624,6 +1624,13 @@ class COM(HCS08_Instruction_with_AXH_Inherent):
         #perform the one's compliment, and store the result
         cpu.set_by_identifier(target, ~operand)
 
+        #set the flags, as per the instruction spec
+        cpu.V = 0
+        cpu.C = 1
+        cpu.Z = (operand == 0xFF) #operand was 0xFF, compliments to 00
+        cpu.N = (operand < 128) #operand's MSB was 0, compliments to 1
+
+
 
 class CPHX(HCS08_Instruction):
     """
@@ -1712,7 +1719,7 @@ class CPX(HCS08_Instruction):
         _, operand = operand
 
         #perform a theoretical subtraction, which we will use to determine the flag values
-        result = cpu.X - operand
+        result = (cpu.X - operand) % 256
 
         #get quick references to the signs of the accumulator, the operand, and the result
         x_sign = cpu.X > 127
@@ -1749,9 +1756,12 @@ class DAA(HCS08_Instruction):
         elif    cpu.C == 0  and msn >= 0xA  and cpu.HC == 0  and lsn <= 9    :   cpu.A += 0x60;  cpu.C = 1
         elif    cpu.C == 0  and msn >= 9    and cpu.HC == 0  and lsn >= 0xA  :   cpu.A += 0x66;  cpu.C = 1
         elif    cpu.C == 0  and msn >= 0xA  and cpu.HC == 1  and lsn <= 3    :   cpu.A += 0x66;  cpu.C = 1
-        elif    cpu.C == 1  and msn <= 2    and cpu.HC == 0  and lsn <= 9    :   cpu.A += 0x60
-        elif    cpu.C == 1  and msn <= 2    and cpu.HC == 0  and lsn >= 0xA  :   cpu.A += 0x66
-        elif    cpu.C == 1  and msn <= 3    and cpu.HC == 1  and lsn <= 3    :   cpu.A += 0x66
+        elif    cpu.C == 1  and msn <= 2    and cpu.HC == 0  and lsn <= 9    :   cpu.A += 0x60;  cpu.C = 1
+        elif    cpu.C == 1  and msn <= 2    and cpu.HC == 0  and lsn >= 0xA  :   cpu.A += 0x66;  cpu.C = 1
+        elif    cpu.C == 1  and msn <= 3    and cpu.HC == 1  and lsn <= 3    :   cpu.A += 0x66;  cpu.C = 1
+
+        #limit A to byte range
+        cpu.A = cpu.A % 256
 
         #set the flags:
         cpu.V = None #undefined by instruction set spec
@@ -1780,7 +1790,7 @@ class DBNZ(HCS08_Constructed_Branch):
         cpu.set_by_identifier(target, value - 1)
 
         #and branch if the post-decrement result is not zero
-        if operand == 1:
+        if value != 1:
             cpu.PC += offset
 
 
@@ -1802,7 +1812,7 @@ class DEC(HCS08_Instruction_with_AXH_Inherent):
 
         #and set the flags
         cpu.V = (operand == 0x80) #overflow only occurs if we're decrementing from -1 to 127
-        cpu.N = (operand > 128) #negative if operand - 1 > 127
+        cpu.N = ((operand - 1) % 256 > 127) #negative if operand - 1 > 127
         cpu.Z = (operand == 1) #zero if operand -1 == 0
 
 class DIV(HCS08_Instruction):
@@ -1852,8 +1862,7 @@ class EOR(HCS08_Instruction):
         cpu.A = cpu.A ^ operand
 
         #and set the flags
-        cpu.V = False
-        cpu.update_NZ()
+        cpu.update_NZ(V=0)
 
 
 class INC(HCS08_Instruction_with_AXH_Inherent):
@@ -1888,7 +1897,7 @@ class JMP(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #extract the operand value, discarding its address
-        _, operand = operand
+        operand, _ = operand
 
         #and set the PC to the operand value
         cpu.PC = operand
@@ -1905,7 +1914,7 @@ class JSR(HCS08_Instruction):
     def execute(cls, address_mode, cpu, operand):
 
         #extract the operand value, discarding its address
-        _, operand = operand
+        operand, _ = operand
 
         #push the program counter onto the stack
         cpu.push_word(cpu.PC)
@@ -1965,8 +1974,9 @@ class LDHX(HCS08_Instruction):
         cpu.set_HX(operand)
 
         #set the flags
-        cpu.update_NZ(V=0)
-
+        cpu.V = 0
+        cpu.N = operand > 0x7FFF
+        cpu.Z = (operand == 0)
 
 
 class LDX(HCS08_Instruction):
@@ -1987,8 +1997,9 @@ class LDX(HCS08_Instruction):
         cpu.X = operand
 
         #set the flags
-        cpu.update_NZ(V=0)
-
+        cpu.V = 0
+        cpu.N = cpu.X > 127
+        cpu.Z = (cpu.X == 0)
 
 
 
@@ -2019,7 +2030,7 @@ class LSR(HCS08_Instruction_with_AXH_Inherent):
         cpu.C = value & 0x01
 
         #calculate the result
-        result = operand >> 1
+        result = value >> 1
 
         #and store it to the appropriate location
         cpu.set_by_identifier(target, result)
@@ -2062,21 +2073,80 @@ class MOV(HCS08_Instruction):
         return code
 
     @classmethod
+    def read_operand(cls, address_mode, cpu):
+
+        try:
+
+            #handle the special-case immediate first
+            if address_mode == 'imm':
+
+                #get the single byte immediate
+                immediate = cpu.fetch_byte()
+
+                #and the single byte address
+                addr = cpu.fetch_byte()
+
+                #and return both
+                return ((None, immediate), (addr, cpu.ram[addr]))
+
+            #otherwise, handle the generic cases
+            else:
+
+                #handle direct mode
+                if address_mode == 'dir':
+
+                    #get the two direct memory addresses
+                    addr_a, addr_b = cpu.fetch_byte(), cpu.fetch_byte()
+
+                #handle indexed, post increment mode (direct source)
+                elif address_mode == 'ix1':
+
+                    #get the direct operand
+                    addr_a = cpu.fetch_byte()
+
+                    #and get the indexed offset operand
+                    addr_b = cpu.ram[cpu.get_HX()]
+
+                    #post-increment HX
+                    cpu.set_HX(cpu.get_HX() + 1)
+
+                #handle indexed, post increment mode (indexed source)
+                elif address_mode == 'ix':
+
+                    #get the direct operand
+                    addr_a = cpu.ram[cpu.get_HX()]
+
+                    #and get the indexed offset operand
+                    addr_b = cpu.fetch_byte()
+
+                    #post-increment HX
+                    cpu.set_HX(cpu.get_HX() + 1)
+
+
+                #and return them, along with their values
+                return ((addr_a, cpu.ram[addr_a]), (addr_b, cpu.ram[addr_b]))
+
+        except KeyError as e:
+            raise ExecutionException('One of your MOV instructions tried to read from invalid RAM (' + repr(e.args) + ' . Check your operands, and try again.');
+
+
+
+    @classmethod
     def execute(cls, address_mode, cpu, operand):
 
         #extract the source operand value, discarding its address
-        _, operand = operand[0]
+        _, value = operand[0]
 
         #and extract the location of the target operand, discarding its value
         target, _ = operand[1]
 
         #copy the operand to the target location
-        cpu.set_by_identifier(target, operand)
+        cpu.set_by_identifier(target, value)
 
         #and set the flags
         cpu.V = 0
-        cpu.N = (operand > 127)
-        cpu.Z = (operand == 0)
+        cpu.N = (value > 127)
+        cpu.Z = (value == 0)
 
 
 
@@ -2118,7 +2188,7 @@ class NEG(HCS08_Instruction_with_AXH_Inherent):
 
         #and set the relevant flags
         cpu.V = (operand == 0x80) #taking the two's compliment of 128 causes unsigned overflow
-        cpu.N = (operand < 128) #the value will be negative if it was positive before
+        cpu.N = (0 < operand <= 128) #the value will be negative if it was positive before
         cpu.Z = (operand == 0)
         cpu.C = (operand != 0)
 
@@ -2169,7 +2239,7 @@ class ORA(HCS08_Instruction):
         _, operand = operand
 
         #perform the core operation
-        cpu.A = cpu.A ^ operand
+        cpu.A = cpu.A | operand
 
         #and set the flags
         cpu.V = False
@@ -2245,7 +2315,7 @@ class ROL(HCS08_Instruction_with_AXH_Inherent):
         cpu.set_by_identifier(target, result)
 
         #and set the new carry value
-        cpu.C = operand > 128
+        cpu.C = operand > 127
 
         #set the other flags
         cpu.N = (result > 127)
@@ -2360,6 +2430,7 @@ class SBC(HCS08_Instruction):
 
         #finally, store the result
         cpu.A = result
+        cpu.update_NZ()
 
 
 
@@ -2437,8 +2508,16 @@ class STHX(HCS08_Instruction):
         #extract the operand location, discarding its value
         target, _ = operand
 
+        #get the value in HX
+        value = cpu.get_HX()
+
         #store the value of HX to the target location
-        cpu.set_by_identifier(target, cpu.get_HX(), is_word=True)
+        cpu.set_by_identifier(target, value, is_word=True)
+
+        #set the flags
+        cpu.V = 0
+        cpu.N = (value > 0x7FFF)
+        cpu.Z = (value == 0)
 
 
 
@@ -2511,6 +2590,7 @@ class SUB(HCS08_Instruction):
 
         #finally, store the result
         cpu.A = result
+        cpu.update_NZ()
 
 
 class SWI(HCS08_Not_Implemented):
@@ -2580,17 +2660,10 @@ class TST(HCS08_Instruction_with_AXH_Inherent):
         #extract the operand value, discarding its address
         _, operand = operand
 
-        #perform the theoretical subtraction
-        result = (cpu.A - operand) % 256
-
-        #get quick references to the signs of the accumulator, the operand, and the result
-        a_sign = cpu.A > 127
-        result_sign = result > 127
-        operand_sign = operand > 127
-
         #flag values, taken directly from the instruction set spec:
-        cpu.V = (a_sign and not result_sign and not operand_sign) or (not a_sign and operand_sign and result_sign)
-        cpu.C = (operand_sign and not a_sign) or (operand_sign and result_sign) or (result_sign and not a_sign)
+        cpu.V = 0
+        cpu.N = (operand > 127)
+        cpu.Z = (operand == 0)
 
 
 class TSX(HCS08_Instruction):

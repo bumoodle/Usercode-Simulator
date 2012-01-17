@@ -393,8 +393,16 @@ class HCS08(Computer):
             and set_by_identifier(0, 12) would set ram[0] to 12.
         """
 
+        #always work with words for word-size registers
+        if identifier in ('SP', 'PC'):
+            is_word = True
+
+        #if the identifier is the full HX register, return H merged with X
+        if identifier == 'HX':
+            self.set_HX(value)
+
         #if the identifier is an integer, use it as a RAM address
-        if isinstance(identifier, int):
+        elif isinstance(identifier, int):
 
             #if we've been told the value is a word, set two bytes of RAM
             if is_word:
@@ -421,8 +429,16 @@ class HCS08(Computer):
             and get_by_identifier(0x01) returns the value in ram[1].
         """
 
+        #assume we're working with words for word-size registers
+        if identifier in ('SP', 'PC'):
+            is_word = True
+
+        #if we've been instructed to retrieve the operator HX, then do so
+        if identifier == 'HX':
+            return self.get_HX()
+
         #if the identifier is an integer, use it as a memory address
-        if isinstance(identifier, int):
+        elif isinstance(identifier, int):
 
             #if the address is in RAM, return the appropriate value
             if identifier in self.ram:
