@@ -642,10 +642,18 @@ class HCS08(Computer):
             #split the term into its name and value
             identifier, _, value = term.partition('=')
 
+            #try to convert the identifier into an int; which may not always be possible
+            #(if it isn't possible, this doesn't mean anything in particular is wrong; for example, 'A' won't convert to an integer properly, but references the accumulator)
+            try:
+                identifier = int(identifier)
+            except:
+                pass
+
+            #parse the value- this conversion _is_ required- otherwise we were handed invalid state
             try:
                 value = int(value)
             except TypeError:
-                raise UserCodeException('An value was provided for ' + identifier + ' by the grading routine provided by your instructor. Please bring this to your instructor\'s attention.')
+                raise UserCodeException('An inappropriate value was provided for ' + identifier + ' by the grading routine provided by your instructor. Please bring this to your instructor\'s attention.')
 
             #if a valid identifier was provided, adjust the state accordingly
             if identifier:
