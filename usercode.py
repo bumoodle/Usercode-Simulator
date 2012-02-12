@@ -104,6 +104,7 @@ def mainloop(system):
 
             elif command in ('l', 'loadstate'):
                 system.unserialize_state(argument)
+                print "Loaded."
 
             #reset the system, when requested
             elif command in ('r', 'reset'):
@@ -139,6 +140,9 @@ def mainloop(system):
                 except TypeError as e:
                     print 'Not understood; limit unchanged.'
 
+            #simple handshaking command
+            elif command in ('ping', 'pn'):
+                    print "Pong.";
 
             #flush the stdout
             sys.stdout.flush()
