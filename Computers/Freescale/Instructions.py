@@ -2088,8 +2088,6 @@ class MOV(HCS08_Instruction):
         #perform the normal, core processing to handle the first argument
         code = super(MOV, cls).assemble(tokens, symbol_list, assembler)
 
-        print tokens
-
         #if we're using index mode, and our index isn't post-increment, this is an invalid addressing mode
         if 'index' in tokens:
             if tokens['index'] == 'X':
