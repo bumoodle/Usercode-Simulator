@@ -2092,6 +2092,11 @@ class MOV(HCS08_Instruction):
         if 'target' in tokens:
             code.append(parse_operand(tokens['target'], symbol_list))
 
+        #if we're using index mode, and our index isn't post-increment, this is an invalid addressing mode
+        if 'index' in tokens:
+            if tokens['index'] == 'X':
+                raise InvalidAddressingException('The MOV instruction cannot be used this way. Are you using a supported addressing mode? Check the CPU quick reference, and try again.')
+
         #in the event that we have the format MOV dd,X+, the parser will interpret that as an index offset, which will automatically produce the correct output
         #if that did not occur, it's likely the MOV instruction is malformed
         elif 'index_offset' not in tokens:
