@@ -2088,14 +2088,16 @@ class MOV(HCS08_Instruction):
         #perform the normal, core processing to handle the first argument
         code = super(MOV, cls).assemble(tokens, symbol_list, assembler)
 
-        #and append the move target
-        if 'target' in tokens:
-            code.append(parse_operand(tokens['target'], symbol_list))
+        print tokens
 
         #if we're using index mode, and our index isn't post-increment, this is an invalid addressing mode
         if 'index' in tokens:
             if tokens['index'] == 'X':
                 raise InvalidAddressingException('The MOV instruction cannot be used this way. Are you using a supported addressing mode? Check the CPU quick reference, and try again.')
+
+        #and append the move target
+        if 'target' in tokens:
+            code.append(parse_operand(tokens['target'], symbol_list))
 
         #in the event that we have the format MOV dd,X+, the parser will interpret that as an index offset, which will automatically produce the correct output
         #if that did not occur, it's likely the MOV instruction is malformed
