@@ -2089,9 +2089,8 @@ class MOV(HCS08_Instruction):
         code = super(MOV, cls).assemble(tokens, symbol_list, assembler)
 
         #if we're using index mode, and our index isn't post-increment, this is an invalid addressing mode
-        if 'index' in tokens:
-            if tokens['index'] == 'X':
-                raise InvalidAddressingException('The MOV instruction cannot be used this way. Are you using a supported addressing mode? Check the CPU quick reference, and try again.')
+        if 'index' in tokens and tokens['index'] == 'X':
+                raise InvalidAddressingException('The MOV instruction cannot be used with the Indexed addressing mode. Check the CPU quick reference, and try again.')
 
         #and append the move target
         if 'target' in tokens:
