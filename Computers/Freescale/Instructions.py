@@ -2133,7 +2133,7 @@ class MOV(HCS08_Instruction):
                     addr_a = cpu.fetch_byte()
 
                     #and get the indexed offset operand
-                    addr_b = cpu.ram[cpu.get_HX()]
+                    addr_b = cpu.get_HX()
 
                     #post-increment HX
                     cpu.set_HX(cpu.get_HX() + 1)
@@ -2142,7 +2142,7 @@ class MOV(HCS08_Instruction):
                 elif address_mode == 'ix':
 
                     #get the direct operand
-                    addr_a = cpu.ram[cpu.get_HX()]
+                    addr_a = cpu.get_HX()
 
                     #and get the indexed offset operand
                     addr_b = cpu.fetch_byte()
@@ -2161,6 +2161,7 @@ class MOV(HCS08_Instruction):
 
     @classmethod
     def execute(cls, address_mode, cpu, operand):
+
 
         #extract the source operand value, discarding its address
         _, value = operand[0]
