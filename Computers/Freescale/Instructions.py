@@ -1858,8 +1858,8 @@ class DIV(HCS08_Instruction):
 
         #perform division, and store the result
         try:
-            cpu.A = ha // cpu.X
-            cpu.H = ha % cpu.A
+            cpu.A = (ha // cpu.X) % 256
+            cpu.H = ha % cpu.X
 
             #if the division completed succesfully, clear the carry bit
             cpu.C = 0

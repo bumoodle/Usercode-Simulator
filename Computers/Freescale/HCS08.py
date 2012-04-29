@@ -106,7 +106,7 @@ class HCS08(Computer):
     FLAGS = ('V', 'HC', 'I', 'N', 'Z', 'C')
     """ Convenience 'contsant', which contains the names of each of the device's flags. Can be used with self.__dict__ to iterate over each of the flags."""
 
-    EXPOSED_RAM = tuple(range(0x80, 0x85)) #DEBUG ONLY: make larger later
+    EXPOSED_RAM = tuple(range(0x80, 0x90)) #DEBUG ONLY: make larger later
     """ Contains a range of RAM addresses will be returned during state serialization. """
 
     EXPOSED_PROPERTIES = ('Cycles',)
@@ -165,7 +165,6 @@ class HCS08(Computer):
 
                 #simulate a random byte value
                 self.ram[i] = random.randrange(0, 256)
-
 
     def initialize_flash(self):
         """
@@ -230,6 +229,13 @@ class HCS08(Computer):
         self.initialize_registers()
         self.initialize_flags()
 
+        #reset the list of altered RAM
+        self.altered_ram = []
+        self.altered_registers = []
+
+        #and take a snapshot of the initial register and flag state
+        self._initial_registers = self._register_snapshot()
+
         #reset the executed cycle count
         self.Cycles = 0
 
@@ -237,7 +243,8 @@ class HCS08(Computer):
         self.PC = min(self.flash)
 
         #set the stack pointer to the end of RAM
-        self.SP = max(self.ram)
+        #self.SP = max(self.ram)
+        self.SP = self.memory_map['ram'][0]['end'];
 
         #ensure the CPU isn't halted
         self._halted = False
@@ -363,6 +370,30 @@ class HCS08(Computer):
         #split the value into a MSB and LSB, and assign those to H and X respectively
         self.H, self.X = split_word(value)
 
+    def set_flash_byte(self, addr, value):
+        """
+            Sets a value in flash, with checks. Requries flash to be initialized.
+        """
+
+        #if the address is not within initialized flash
+        if addr not in self.flash:
+            raise InvalidMemoryException('Tried to write address' + repr(addr) + ', which does not exist in valid flash.');
+
+        #set the value
+        self.flash[addr] = value % 256;
+
+    def set_flash_word(self, addr, word):
+        """
+            Sets a word in flash, with checks. Requires flash to be initialized.
+        """
+
+        #split the word into two seperate bytes
+        msb, lsb = split_word(word)
+
+        #and write each of the two bytes, in big endian order:
+        self.set_flash_byte(addr, msb)
+        self.set_flash_byte(addr + 1, lsb)
+
 
     def set_ram_byte(self, addr, value):
         """
@@ -372,9 +403,13 @@ class HCS08(Computer):
         #if the address is not within initialized ram
         if addr not in self.ram:
             raise InvalidMemoryException('Tried to write to address ' + repr(addr) + ', which does not exist in valid RAM.')
+        #if we've yet to mark this address as altered
+        if addr not in self.altered_ram:
+            self.altered_ram.append(addr)
 
         #set the value
         self.ram[addr] = value % 256
+
 
     def set_ram_word(self, addr, word):
         """
@@ -389,7 +424,7 @@ class HCS08(Computer):
         self.set_ram_byte(addr + 1, lsb)
 
 
-    def set_by_identifier(self, identifier, value, is_word=False):
+    def set_by_identifier(self, identifier, value, is_word=False, allow_flash=False):
         """
             Sets a register or RAM value by its name, or address.
 
@@ -404,6 +439,17 @@ class HCS08(Computer):
         #if the identifier is the full HX register, return H merged with X
         if identifier == 'HX':
             self.set_HX(value)
+
+        #if we're in a mode which allows writes to flash, and we're trying to set a flash value
+        elif isinstance(identifier, int) and (identifier in self.flash) and allow_flash:
+
+            #if we've been told the value is a word, set two bytes of flash
+            if is_word:
+                self.set_flash_word(identifier, value)
+
+            #otherwise, set one, truncating if necessary
+            else:
+                self.set_flash_byte(identifier, value)
 
         #if the identifier is an integer, use it as a RAM address
         elif isinstance(identifier, int):
@@ -498,7 +544,10 @@ class HCS08(Computer):
         """
 
         #get the byte which the program counter points to
-        byte = self.flash[self.PC]
+        try:
+            byte = self.flash[self.PC]
+        except KeyError:
+            raise InvalidMemoryException('Tried to execute the byte at address ' + repr(self.PC) + ', which does not exist in valid flash.');
 
         #increment the program counter
         self.PC += 1
@@ -601,15 +650,80 @@ class HCS08(Computer):
         #if we didn't find a class, raise an InvalidOpcodeException
         raise InvalidOpcodeException('The microcontroller attempted to execute the opcode ' + repr(opcode) + ' which does not correspond to a valid instruction. Did the execution "flow" run past the end of your program?')
 
+    def list_changes(self):
+        """
+            Returns a list of changes since the device reset.
+        """
 
-    def serialize_state(self, readable=False):
+        #create a list of all registers which have changed since system initialization
+        changedlist = self._registers_changed_since_snapshot(self._initial_registers)
+
+        #and append any RAM that has been altered
+        changedlist.extend([repr(x) for x in self.altered_ram])
+
+        #if changes have occured, list them
+        if changedlist:
+            return '|'.join(changedlist)
+        
+        #otherwise, return a dash, indicating that nothing was altered
+        else:
+            return '-'
+
+
+    def _register_snapshot(self):
+        """
+            Returns a dictionary which holds a snapshot of the device's registers (and flags).
+        """
+
+        snapshot = {}
+
+        #add each register to the snapshot
+        for identifier in self.REGISTERS + self.FLAGS:
+            snapshot[identifier] = self.get_by_identifier(identifier)
+
+        return snapshot
+
+    def _registers_changed_since_snapshot(self, snapshot):
+        """
+            Returns a list of registers changed since the last snapshot.
+        """
+        
+        #start an empty list of changed registers
+        changed = []
+
+        #for each register in the snapshot
+        for register in snapshot:
+
+            #if the register's value has changed
+            if snapshot[register] != self.get_by_identifier(register):
+                
+                #add it to the list of changed regitsers
+                changed.append(register)
+
+        #and return the changedlist
+        return changed
+
+
+
+    def serialize_state(self, readable=False, all_inclusive=False):
         """
             Serializes the state into a format which can be easily exchanged with other programs.
         """
 
         buf = []
 
-        for identifier in self.REGISTERS + self.FLAGS + self.EXPOSED_RAM + self.EXPOSED_PROPERTIES:
+        #if the user has request the full RAM be serialized, do so
+        if all_inclusive:
+            desired_ram = tuple(self.ram.keys())
+            desired_flash = tuple(self.flash.keys())
+
+        #otherwise, use only the visible RAM defined by the EXPOSED_RAM constant
+        else:
+            desired_ram = self.EXPOSED_RAM + tuple(self.altered_ram)
+            desired_flash = tuple()
+
+        #for each of the microprocessor areas queued for serialization
+        for identifier in self.REGISTERS + self.FLAGS + desired_ram + desired_flash + self.EXPOSED_PROPERTIES:
 
             #read the value at the given location
             value = self.get_by_identifier(identifier)
@@ -656,8 +770,8 @@ class HCS08(Computer):
                 raise UserCodeException('An inappropriate value was provided for ' + identifier + ' by the grading routine provided by your instructor. Please bring this to your instructor\'s attention.')
 
             #if a valid identifier was provided, adjust the state accordingly
-            if identifier:
-                self.set_by_identifier(identifier, value)
+            if identifier or (identifier is 0):
+                self.set_by_identifier(identifier, value, is_word=False, allow_flash=True)
 
 
     def handle_system_command(self, command):
